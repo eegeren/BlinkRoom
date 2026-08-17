@@ -1,0 +1,1 @@
+export function canRelaySignal(senderRoom: string, targetRoom: string, status: string, expiresAt: Date, now = new Date()) { return senderRoom.length > 0 && senderRoom === targetRoom && status === "ACTIVE" && expiresAt > now; }

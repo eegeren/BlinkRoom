@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RoomStatus {
+  ACTIVE
+  EXPIRED
+  DESTROYED
+}
+
+enum ItemType {
+  TEXT
+  LINK
+  IMAGE
+  FILE
+}
+
+enum ItemAvailability {
+  DIRECT
+  STORED
+  HYBRID
+}
+
+enum UploadStatus {
+  PENDING
+  UPLOADING
+  COMPLETED
+  ABORTED
+  FAILED
+}
+
+model Room {
+  id             String      @id @default(uuid())
+  slug           String      @unique
+  createdAt      DateTime    @default(now())
+  expiresAt      DateTime
+  destroyedAt    DateTime?
+  ownerTokenHash String
+  encryptedVerifier String?
+  encryptionVersion Int       @default(1)
+  status         RoomStatus  @default(ACTIVE)
+  items          RoomItem[]
+  uploadSessions UploadSession[]
+  @@index([status, expiresAt])
+}
+
+model UploadSession {
+  id                String       @id @default(uuid())
+  roomId            String
+  room              Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  itemId             String       @unique
+  senderId           String
+  itemType           ItemType
+  storageKey         String       @unique
+  provider           String
+  multipartUploadId String?
+  uploadTokenHash    String
+  encryptedMetadata String
+  encryptedSize     BigInt
+  directDelivered   Boolean      @default(false)
+  status             UploadStatus @default(PENDING)
+  createdAt          DateTime     @default(now())
+  completedAt        DateTime?
+  expiresAt          DateTime
+  @@index([roomId, status])
+  @@index([status, createdAt])
+}
+
+model RoomItem {
+  id                String   @id @default(uuid())
+  roomId            String
+  room              Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId          String
+  type              ItemType
+  encryptedPayload  String?
+  encryptedMetadata String?
+  encryptionVersion Int      @default(1)
+  encryptedSize     Int?
+  storageKey        String?
+  availability      ItemAvailability @default(STORED)
+  createdAt         DateTime @default(now())
+  @@index([roomId, createdAt])
+}

@@ -1,0 +1,47 @@
+{
+  "name": "blinkroom",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch server.ts",
+    "build": "prisma generate && next build",
+    "start": "NODE_ENV=production tsx server.ts",
+    "lint": "eslint . --ignore-pattern .next --ignore-pattern storage",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --env-file=.env --test tests/*.test.ts",
+    "test:integration": "tsx tests/e2ee-integration.ts && tsx tests/webrtc-integration.ts",
+    "test:r2": "tsx tests/r2-integration.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1111.0",
+    "@aws-sdk/s3-request-presigner": "^3.1111.0",
+    "@prisma/client": "6.19.0",
+    "busboy": "^1.6.0",
+    "lucide-react": "^0.468.0",
+    "nanoid": "^3.3.18",
+    "next": "^16.3.1",
+    "qrcode": "^1.5.4",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.2.1",
+    "@types/busboy": "^1.5.4",
+    "@types/node": "22.19.19",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "prisma": "6.19.0",
+    "tailwindcss": "4.2.1",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3"
+  }
+}

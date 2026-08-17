@@ -1,0 +1,6 @@
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { db } from "@/src/lib/db";
+import { tokenHash } from "@/src/lib/security";
+const input = z.object({ encryptionVersion: z.literal(1), encryptedVerifier: z.string().min(40).max(10_000) }).strict();
+export async function POST(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) { const { slug } = await params; const parsed = input.safeParse(await req.json().catch(() => null)); if (!parsed.success) return NextResponse.json({ error: "Invalid encrypted verifier" }, { status: 400 }); const room = await db.room.findUnique({ where: { slug } }); const token = req.cookies.get(`blinkroom_owner_${slug}`)?.value; if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 }); if (!token || tokenHash(token) !== room.ownerTokenHash) return NextResponse.json({ error: "Owner only" }, { status: 403 }); if (room.status !== "ACTIVE" || room.expiresAt <= new Date()) return NextResponse.json({ error: "Room unavailable" }, { status: 410 }); const updated = await db.room.updateMany({ where: { id: room.id, encryptedVerifier: null }, data: parsed.data }); if (updated.count !== 1) return NextResponse.json({ error: "Verifier already set" }, { status: 409 }); return NextResponse.json({ ok: true }); }
