@@ -9,13 +9,15 @@ import { roomChannel } from "@/src/server/realtime";
 import { refreshRoomStatus } from "@/src/server/rooms";
 import { storage } from "@/src/server/storage";
 import { validateStorageQuota } from "@/src/server/storage/quota";
+import { encryptedFileSize } from "@/src/lib/crypto/file";
 
 export const runtime = "nodejs";
 const meta = z.object({ itemId: z.string().uuid(), senderId: z.string().uuid(), type: z.enum(["IMAGE", "FILE"]), encryptionVersion: z.coerce.number().pipe(z.literal(1)), encryptedMetadata: z.string().min(40).max(100_000), directDelivered: z.enum(["true", "false"]).optional().default("false") }).strict();
 type ParsedUpload = { fields: Record<string, string>; size: number; storageKey: string; truncated: boolean };
+const maxEncryptedFileBytes = () => encryptedFileSize(env.MAX_FILE_SIZE_MB * 1024 * 1024);
 async function parseUpload(req: NextRequest, slug: string): Promise<ParsedUpload> {
   if (!req.body) throw new Error("EMPTY_UPLOAD"); const fields: Record<string, string> = {}; let size = 0; let storageKey = ""; let truncated = false; let uploadPromise: Promise<string> | null = null;
-  const maxEncryptedBytes = env.MAX_FILE_SIZE_MB * 1024 * 1024 + 2 * 1024 * 1024;
+  const maxEncryptedBytes = maxEncryptedFileBytes();
   const parser = Busboy({ headers: Object.fromEntries(req.headers), limits: { files: 1, fields: 8, fileSize: maxEncryptedBytes } });
   parser.on("field", (name, value) => { fields[name] = value; });
   parser.on("file", (_name, stream) => { const itemId = fields.itemId; if (!itemId || !z.string().uuid().safeParse(itemId).success) { stream.resume(); return; } const meter = new Transform({ transform(chunk: Buffer, _encoding, callback) { size += chunk.length; callback(null, chunk); } }); stream.on("limit", () => { truncated = true; }); uploadPromise = storage.upload({ roomSlug: slug, itemId, filename: "encrypted.bin", stream: meter }); stream.pipe(meter); });

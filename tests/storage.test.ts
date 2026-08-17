@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 import { createStorageProvider } from "../src/server/storage";
 import { canAuthorizeStoredDownload, canCreateUpload, isStaleMultipart, storageObjectKey, validateStorageQuota } from "../src/server/storage/quota";
 import { MemoryRateLimitProvider } from "../src/server/rate-limit";
+import { requireR2Config, resolveStorageRuntimeConfig } from "../src/lib/env";
 
 const baseQuota = { encryptedSize: 10, storedBytes: 20, storedItems: 1, pendingUploads: 0, maxFileBytes: 100, maxRoomBytes: 100, maxItems: 5, maxConcurrent: 2 };
 test("storage provider selection keeps local as an explicit provider", () => assert.equal(createStorageProvider("local").kind, "local"));
+test("runtime storage config disables direct upload for local", () => { const config = resolveStorageRuntimeConfig({ STORAGE_PROVIDER: " local " }); assert.equal(config.directUpload, false); assert.equal(config.maxFileSize, 10_737_418_240); });
+test("runtime storage config enables R2 only with all credentials", () => { const config = resolveStorageRuntimeConfig({ STORAGE_PROVIDER: " R2 ", R2_ACCOUNT_ID: "account", R2_ACCESS_KEY_ID: "access", R2_SECRET_ACCESS_KEY: "secret", R2_BUCKET_NAME: "blinkroom-files" }); assert.equal(config.directUpload, true); assert.equal(config.maxFileSize, 10_737_418_240); assert.equal(requireR2Config(config).endpoint, "https://account.r2.cloudflarestorage.com"); });
+test("R2 selection fails clearly when credentials are missing", () => assert.throws(() => resolveStorageRuntimeConfig({ STORAGE_PROVIDER: "r2", R2_ACCOUNT_ID: "account" }), /requires R2_ACCOUNT_ID/));
 test("object keys are opaque, random, and contain no filename", () => { const a = storageObjectKey("ABCD-EF"), b = storageObjectKey("ABCD-EF"); assert.match(a, /^rooms\/ABCD-EF\/[0-9a-f-]{36}\.bin$/); assert.notEqual(a, b); assert.ok(!a.includes("contract.pdf")); });
 test("quota accepts a valid reservation", () => assert.deepEqual(validateStorageQuota(baseQuota), { ok: true }));
 test("quota rejects file, room, item, and concurrent limits", () => { assert.deepEqual(validateStorageQuota({ ...baseQuota, encryptedSize: 101 }).ok, false); assert.deepEqual(validateStorageQuota({ ...baseQuota, storedBytes: 95 }).ok, false); assert.deepEqual(validateStorageQuota({ ...baseQuota, storedItems: 5 }).ok, false); assert.deepEqual(validateStorageQuota({ ...baseQuota, pendingUploads: 2 }).ok, false); });
