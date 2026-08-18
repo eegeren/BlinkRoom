@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/src/lib/db";
 import { env } from "@/src/lib/env";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
@@ -21,9 +22,14 @@ function logUploadError(tag: string, error: unknown, context: Record<string, str
   console.error(tag, { ...context, name: error instanceof Error ? error.name : "Unknown", message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
 }
 
-async function reserveUploadSession(room: RoomSnapshot, input: UploadInput, storageKey: string, uploadToken: string): Promise<PendingSession> {
+type LockTransaction = Pick<Prisma.TransactionClient, "$executeRaw">;
+export async function acquireRoomUploadLock(tx: LockTransaction, roomId: string) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${roomId}))`;
+}
+
+export async function reserveUploadSession(room: RoomSnapshot, input: UploadInput, storageKey: string, uploadToken: string): Promise<PendingSession> {
   return db.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${room.id}))`;
+    await acquireRoomUploadLock(tx, room.id);
     const [stored, pending, itemCount] = await Promise.all([
       tx.roomItem.aggregate({ where: { roomId: room.id, storageKey: { not: null } }, _sum: { encryptedSize: true } }),
       tx.uploadSession.aggregate({ where: { roomId: room.id, status: { in: ["PENDING", "UPLOADING"] } }, _sum: { encryptedSize: true }, _count: true }),
