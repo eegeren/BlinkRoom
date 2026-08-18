@@ -20,11 +20,11 @@ export class LocalStorageProvider implements StorageProvider {
     await pipeline(input.stream, createWriteStream(target, { flags: "wx", mode: 0o600 }));
     return key;
   }
-  async delete(key: string) { await rm(this.resolve(key), { force: true }); }
-  async deleteObjects(keys: string[]) { await Promise.all(keys.map((key) => this.delete(key).catch(() => undefined))); }
+  async deleteObject(key: string) { await rm(this.resolve(key), { force: true }); }
+  async deleteObjects(keys: string[]) { await Promise.all(keys.map((key) => this.deleteObject(key).catch(() => undefined))); }
   async getPublicOrSignedUrl(key: string) { return `/api/files/${key.split("/").map(encodeURIComponent).join("/")}`; }
   async createReadStream(key: string) { return createReadStream(this.resolve(key)); }
-  async deleteRoomFiles(slug: string) { await rm(this.resolve(`${slug}/placeholder`), { recursive: true, force: true }).catch(() => undefined); await rm(path.resolve(this.root, slug), { recursive: true, force: true }); }
+  async deleteRoomObjects(slug: string) { await rm(this.resolve(`${slug}/placeholder`), { recursive: true, force: true }).catch(() => undefined); await rm(path.resolve(this.root, slug), { recursive: true, force: true }); }
   async createMultipartUpload(): Promise<string> { throw new Error("Multipart direct upload is not available for local storage"); }
   async signUploadPart(): Promise<string> { throw new Error("Multipart direct upload is not available for local storage"); }
   async completeMultipartUpload() { throw new Error("Multipart direct upload is not available for local storage"); }

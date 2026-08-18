@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/src/lib/db";
 import { tokenHash } from "@/src/lib/security";
-import { publicRoom, refreshRoomStatus } from "@/src/server/rooms";
+import { acquireRoomLock, publicRoom, refreshRoomStatus } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
 import { roomDurationSchema } from "@/src/lib/duration";
 import { cleanupRoomStorage } from "@/src/server/storage/cleanup";
@@ -34,7 +34,8 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const room = await db.room.findUnique({ where: { slug } });
   if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
   if (!token || tokenHash(token) !== room.ownerTokenHash) return NextResponse.json({ error: "Owner only" }, { status: 403 });
-  await db.room.update({ where: { id: room.id }, data: { status: "DESTROYED", destroyedAt: new Date() } });
+  const destroyed = await db.$transaction(async (tx) => { await acquireRoomLock(tx, room.id); const current = await tx.room.findUnique({ where: { id: room.id }, select: { status: true, expiresAt: true } }); const now = new Date(); if (!current || current.status !== "ACTIVE" || current.expiresAt <= now) return false; await tx.room.update({ where: { id: room.id }, data: { status: "DESTROYED", destroyedAt: now, cleanupStatus: "PENDING", cleanupLastError: null, cleanupUpdatedAt: now } }); return true; });
+  if (!destroyed) return NextResponse.json({ error: "Room is no longer active" }, { status: 410 });
   roomChannel.destroyed(slug); queueMicrotask(() => { void cleanupRoomStorage(room.id, slug).catch(() => undefined); });
   return NextResponse.json({ ok: true });
 }

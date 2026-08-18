@@ -24,6 +24,7 @@ const baseSchema = z.object({
   MAX_CONCURRENT_UPLOADS: z.coerce.number().int().positive().max(20).default(3),
   STORAGE_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(900).default(300),
   MULTIPART_STALE_HOURS: z.coerce.number().positive().max(168).default(6),
+  ORPHAN_GRACE_HOURS: z.coerce.number().positive().max(720).default(24),
   CLEANUP_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(100),
   TRUST_PROXY_HEADERS: z.string().transform((value) => value === "true").default("false"),
   CLEANUP_SECRET: z.string().min(16),

@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 import { db } from "@/src/lib/db";
 import { env } from "@/src/lib/env";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
 import { ephemeralRequestKey, ownerToken, retryUploadToken, tokenHash } from "@/src/lib/security";
 import { rateLimiter } from "@/src/server/rate-limit";
-import { refreshRoomStatus } from "@/src/server/rooms";
+import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { storage } from "@/src/server/storage";
 import { storageObjectKey, validateStorageQuota } from "@/src/server/storage/quota";
 
@@ -23,10 +22,7 @@ function logUploadError(tag: string, error: unknown, context: Record<string, str
   console.error(tag, { ...context, name: error instanceof Error ? error.name : "Unknown", message: error instanceof Error ? error.message : String(error), stack: error instanceof Error ? error.stack : undefined });
 }
 
-type LockTransaction = Pick<Prisma.TransactionClient, "$executeRaw">;
-export async function acquireRoomUploadLock(tx: LockTransaction, roomId: string) {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${roomId}))`;
-}
+export const acquireRoomUploadLock = acquireRoomLock;
 
 export async function reserveUploadSession(room: RoomSnapshot, input: UploadInput, storageKey: string, uploadToken: string): Promise<ReservedSession> {
   return db.$transaction(async (tx) => {
@@ -81,7 +77,7 @@ const defaultDependencies: UploadRouteDependencies = {
   markUploading: async (sessionId, uploadId) => { await db.uploadSession.update({ where: { id: sessionId }, data: { multipartUploadId: uploadId, status: "UPLOADING" } }); },
   markFailed: async (sessionId) => { await db.uploadSession.updateMany({ where: { id: sessionId, status: "PENDING" }, data: { status: "FAILED" } }); },
   abortMultipartUpload: (storageKey, uploadId) => storage.abortMultipartUpload(storageKey, uploadId),
-  deleteObject: (storageKey) => storage.delete(storageKey),
+  deleteObject: (storageKey) => storage.deleteObject(storageKey),
 };
 
 export function createUploadsPost(dependencies: UploadRouteDependencies = defaultDependencies) {

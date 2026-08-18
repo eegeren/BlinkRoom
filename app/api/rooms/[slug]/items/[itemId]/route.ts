@@ -10,6 +10,6 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ s
   const room = await db.room.findUnique({ where: { slug } }); const token = req.cookies.get(`blinkroom_owner_${slug}`)?.value;
   const { tokenHash } = await import("@/src/lib/security"); const isOwner = Boolean(token && room && tokenHash(token) === room.ownerTokenHash);
   if (item.senderId !== senderId && !isOwner) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
-  await db.roomItem.delete({ where: { id: item.id } }); if (item.storageKey) await storage.delete(item.storageKey);
+  await db.roomItem.delete({ where: { id: item.id } }); if (item.storageKey) await storage.deleteObject(item.storageKey);
   roomChannel.itemDeleted(slug, item.id); return NextResponse.json({ ok: true });
 }

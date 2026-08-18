@@ -34,6 +34,13 @@ enum UploadStatus {
   FAILED
 }
 
+enum CleanupStatus {
+  PENDING
+  IN_PROGRESS
+  PARTIAL
+  COMPLETED
+}
+
 model Room {
   id             String      @id @default(uuid())
   slug           String      @unique
@@ -44,9 +51,14 @@ model Room {
   encryptedVerifier String?
   encryptionVersion Int       @default(1)
   status         RoomStatus  @default(ACTIVE)
+  cleanupStatus  CleanupStatus @default(PENDING)
+  cleanupAttempts Int          @default(0)
+  cleanupLastError String?
+  cleanupUpdatedAt DateTime?
   items          RoomItem[]
   uploadSessions UploadSession[]
   @@index([status, expiresAt])
+  @@index([status, cleanupStatus])
 }
 
 model UploadSession {

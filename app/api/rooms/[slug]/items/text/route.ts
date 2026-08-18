@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/src/lib/db";
-import { refreshRoomStatus } from "@/src/server/rooms";
+import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
 import { rateLimiter } from "@/src/server/rate-limit";
 
@@ -12,7 +12,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
   if (!parsed.success) return NextResponse.json({ error: "Invalid encrypted item" }, { status: 400 });
   if (!rateLimiter.check(`item:${parsed.data.senderId}`, 40, 60_000)) return NextResponse.json({ error: "Slow down" }, { status: 429 });
   const room = await refreshRoomStatus(slug); if (!room || room.status !== "ACTIVE") return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
-  const item = await db.roomItem.create({ data: { id: parsed.data.itemId, roomId: room.id, senderId: parsed.data.senderId, type: parsed.data.type, encryptedPayload: parsed.data.encryptedPayload, encryptionVersion: parsed.data.encryptionVersion, encryptedSize: Buffer.byteLength(parsed.data.encryptedPayload) } });
+  const item = await db.$transaction(async (tx) => { await acquireRoomLock(tx, room.id); const active = await tx.room.findUnique({ where: { id: room.id }, select: { status: true, expiresAt: true } }); if (!active || active.status !== "ACTIVE" || active.expiresAt <= new Date()) return null; return tx.roomItem.create({ data: { id: parsed.data.itemId, roomId: room.id, senderId: parsed.data.senderId, type: parsed.data.type, encryptedPayload: parsed.data.encryptedPayload, encryptionVersion: parsed.data.encryptionVersion, encryptedSize: Buffer.byteLength(parsed.data.encryptedPayload) } }); });
+  if (!item) return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
   const output = { id: item.id, senderId: item.senderId, type: item.type, encryptedPayload: item.encryptedPayload, encryptedMetadata: item.encryptedMetadata, encryptionVersion: item.encryptionVersion, encryptedSize: item.encryptedSize, availability: item.availability, createdAt: item.createdAt.toISOString() };
   roomChannel.itemCreated(slug, output); return NextResponse.json(output, { status: 201 });
 }
