@@ -46,7 +46,7 @@ const baseSchema = z.object({
     .default(24),
   MAX_UPLOAD_MB: z.coerce.number().positive().max(10240).default(100),
   MAX_ROOM_ITEMS: z.coerce.number().int().positive().max(10000).default(500),
-  MAX_CONCURRENT_UPLOADS: z.coerce.number().int().positive().max(20).default(3),
+  MAX_CONCURRENT_UPLOADS: z.coerce.number().int().positive().max(20).default(6),
   STORAGE_SIGNED_URL_TTL_SECONDS: z.coerce
     .number()
     .int()

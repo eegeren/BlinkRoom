@@ -89,6 +89,122 @@ const isSafeLink = (value: string) => {
     return false;
   }
 };
+
+const CLIENT_UPLOAD_CONCURRENCY = 6;
+
+type DroppedFile = {
+  path: string;
+  file: File;
+};
+
+function fileFromEntry(entry: FileSystemFileEntry): Promise<File> {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+function readDirectoryBatch(
+  reader: FileSystemDirectoryReader,
+): Promise<FileSystemEntry[]> {
+  return new Promise((resolve, reject) => {
+    reader.readEntries(resolve, reject);
+  });
+}
+
+async function readAllDirectoryEntries(
+  directory: FileSystemDirectoryEntry,
+): Promise<FileSystemEntry[]> {
+  const reader = directory.createReader();
+  const result: FileSystemEntry[] = [];
+
+  while (true) {
+    const batch = await readDirectoryBatch(reader);
+    if (!batch.length) break;
+    result.push(...batch);
+  }
+
+  return result;
+}
+
+async function walkDroppedEntry(
+  entry: FileSystemEntry,
+  parentPath = "",
+): Promise<DroppedFile[]> {
+  const path = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+
+  if (entry.isFile) {
+    const file = await fileFromEntry(entry as FileSystemFileEntry);
+    return [{ path, file }];
+  }
+
+  if (!entry.isDirectory) return [];
+
+  const children = await readAllDirectoryEntries(
+    entry as FileSystemDirectoryEntry,
+  );
+  const nested = await Promise.all(
+    children.map((child) => walkDroppedEntry(child, path)),
+  );
+  return nested.flat();
+}
+
+function safeArchiveName(name: string) {
+  const clean = name
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/[\u0000-\u001f\u007f]/g, "_")
+    .trim();
+  return clean || "Folder";
+}
+
+async function droppedDirectoryToZip(
+  directory: FileSystemDirectoryEntry,
+): Promise<File> {
+  const droppedFiles = await walkDroppedEntry(directory);
+  if (!droppedFiles.length) throw new Error("This folder is empty.");
+
+  const { downloadZip } = await import("client-zip");
+  const rootPrefix = `${directory.name}/`;
+  const zipEntries = droppedFiles.map(({ path, file }) => ({
+    name: path.startsWith(rootPrefix) ? path.slice(rootPrefix.length) : path,
+    input: file,
+  }));
+  const zipBlob = await downloadZip(zipEntries).blob();
+
+  return new File([zipBlob], `${safeArchiveName(directory.name)}.zip`, {
+    type: "application/zip",
+    lastModified: Date.now(),
+  });
+}
+
+async function filesFromDrop(dataTransfer: DataTransfer): Promise<File[]> {
+  const items = Array.from(dataTransfer.items ?? []);
+  if (!items.length) return Array.from(dataTransfer.files);
+
+  const output: File[] = [];
+  for (const item of items) {
+    if (item.kind !== "file") continue;
+
+    const entry = item.webkitGetAsEntry?.();
+    if (!entry) {
+      const file = item.getAsFile();
+      if (file) output.push(file);
+      continue;
+    }
+
+    if (entry.isFile) {
+      output.push(await fileFromEntry(entry as FileSystemFileEntry));
+      continue;
+    }
+
+    if (entry.isDirectory) {
+      output.push(
+        await droppedDirectoryToZip(entry as FileSystemDirectoryEntry),
+      );
+    }
+  }
+
+  return output.length ? output : Array.from(dataTransfer.files);
+}
 async function fileFingerprint(file: File) {
   const sample = 1024 * 1024,
     bytes = new Uint8Array(
@@ -1242,9 +1358,20 @@ export function RoomClient({
     async (files: FileList | File[]) => {
       const oneTime = oneTimeNext;
       setOneTimeNext(false);
-      await Promise.all(
-        Array.from(files).map((file) => uploadOne(file, undefined, oneTime)),
-      );
+
+      const queue = Array.from(files);
+      if (!queue.length) return;
+
+      const workerCount = Math.min(CLIENT_UPLOAD_CONCURRENCY, queue.length);
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (queue.length) {
+          const file = queue.shift();
+          if (!file) return;
+          await uploadOne(file, undefined, oneTime);
+        }
+      });
+
+      await Promise.all(workers);
     },
     [oneTimeNext, uploadOne],
   );
@@ -1318,10 +1445,9 @@ export function RoomClient({
   const left = Math.max(0, new Date(room.expiresAt).getTime() - now);
   const timerLabel = formatRemaining(left);
   const roomUrl = typeof window !== "undefined" ? window.location.href : "";
-  const storedFiles = items.filter(
+  const downloadableFiles = items.filter(
     (item) =>
       (item.type === "FILE" || item.type === "IMAGE") &&
-      item.availability !== "DIRECT" &&
       item.locallyAvailable &&
       item.fileName &&
       item.mimeType &&
@@ -1390,13 +1516,13 @@ export function RoomClient({
   }
   async function downloadAll() {
     const key = keyRef.current;
-    if (!key || storedFiles.length < 2 || downloadingAll) return;
+    if (!key || downloadableFiles.length < 2 || downloadingAll) return;
     setDownloadingAll(true);
     const consumed: { id: string; token: string }[] = [];
     try {
       const usedNames = new Set<string>();
       const files: { name: string; input: Blob }[] = [];
-      for (const [index, item] of storedFiles.entries()) {
+      for (const [index, item] of downloadableFiles.entries()) {
         let consumeToken: string | undefined;
         if (item.oneTime) {
           const reserved = await fetch(
@@ -1529,7 +1655,40 @@ export function RoomClient({
       onDrop={(event) => {
         event.preventDefault();
         setDragging(false);
-        uploadFiles(event.dataTransfer.files);
+
+        const dataTransfer = event.dataTransfer;
+        void (async () => {
+          try {
+            setFeedback("Preparing files…");
+            const files = await filesFromDrop(dataTransfer);
+
+            if (!files.length) {
+              setFeedback("Nothing to upload.");
+              setTimeout(() => setFeedback(""), 1800);
+              return;
+            }
+
+            setFeedback(
+              files.length === 1
+                ? "1 item ready."
+                : `${files.length} items ready.`,
+            );
+            setTimeout(() => setFeedback(""), 1200);
+            await uploadFiles(files);
+          } catch (cause) {
+            console.error("[DROP_PREPARATION_FAILED]", {
+              name: cause instanceof Error ? cause.name : "Unknown",
+              message:
+                cause instanceof Error ? cause.message : String(cause),
+            });
+            setFeedback(
+              cause instanceof Error && cause.message === "This folder is empty."
+                ? "This folder is empty."
+                : "Couldn’t prepare this folder.",
+            );
+            setTimeout(() => setFeedback(""), 2200);
+          }
+        })();
       }}
     >
       {dragging && (
@@ -1690,7 +1849,7 @@ export function RoomClient({
           <span>SHARED IN THIS ROOM</span>
           <div className="timeline-intro-actions">
             <p>Everything here disappears when the room ends.</p>
-            {storedFiles.length > 1 && (
+            {downloadableFiles.length > 1 && (
               <button
                 className="download-all"
                 onClick={downloadAll}
