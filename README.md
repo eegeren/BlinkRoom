@@ -26,3 +26,9 @@ Inactive-room prefix cleanup is safe because the room has already become inacces
 BlinkRoom is installable in current Chromium desktop and Android browsers. Android Web Share Target accepts files, images, text, and URLs into a browser-only IndexedDB inbox, asks for confirmation, then clears the inbox while content is encrypted and shared. iOS Safari does not currently expose installed web apps as general file share targets. The service worker caches only the homepage and icon assets; room pages, APIs, WebSocket traffic, signed R2 URLs, and user objects are never cached.
 
 Deploy with `prisma migrate deploy`. `AUTO_DESTROY_GRACE_SECONDS` defaults to 30, `PRESENCE_LEASE_SECONDS` to 60, and `ONE_TIME_RESERVATION_SECONDS` to 300. Multiple instances coordinate presence leases and one-time reservations in PostgreSQL. Direct-only rooms reject both multipart and local storage routes server-side.
+
+## Privacy-safe GA4
+
+Production analytics is enabled only when Railway builds with `NEXT_PUBLIC_GA_MEASUREMENT_ID=G-161QZ8MP4C`; public env changes require a rebuild. `NEXT_PUBLIC_ANALYTICS_DEBUG=true` enables safe development diagnostics. BlinkRoom measures coarse product actions such as room creation and successful transfers. Room slugs, URL fragments, invite keys, filenames, content, exact sizes, storage/session IDs, peer IDs, and signed URLs are never event parameters. Consent Mode defaults analytics storage to denied and exposes `setAnalyticsConsent` for a future consent UI.
+
+In GA Admin, disable Enhanced Measurement’s automatic page changes/history events, outbound clicks, form interactions, and site search. BlinkRoom sends its own sanitized page views (`/r/[room]`) and allowlisted events. Mark `room_created`, `file_upload_completed`, and `file_download_completed` as key events; `successful_transfer` is the preferred future Ads conversion signal. No Google Ads tag is installed.

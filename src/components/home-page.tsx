@@ -8,6 +8,7 @@ import { roomDurations, type RoomTtlHours } from "@/src/lib/duration";
 import { generateRoomKey, importRoomKey } from "@/src/lib/crypto/room-key";
 import { encryptJson } from "@/src/lib/crypto/payload";
 import { useTheme } from "@/src/components/theme-provider";
+import { trackEvent } from "@/src/lib/analytics";
 
 export function HomePage() {
   const router = useRouter();
@@ -45,6 +46,7 @@ export function HomePage() {
         body: JSON.stringify({ encryptionVersion: 1, encryptedVerifier }),
       });
       if (verifier.ok) {
+        trackEvent("room_created", { room_mode: "standard", duration_bucket: ttlHours === 1 ? "1h" : ttlHours === 6 ? "6h" : ttlHours === 24 ? "24h" : "custom", auto_destroy_enabled: false }, `room:${data.slug}`);
         router.push(`/r/${data.slug}#${roomKey}`);
         return;
       }

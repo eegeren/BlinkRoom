@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/src/components/theme-provider";
 import { PwaRegistration } from "@/src/components/pwa-registration";
+import { AnalyticsProvider } from "@/src/components/analytics-provider";
 
 const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
 const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-mono" });
@@ -44,6 +45,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   const themeScript = `(function(){try{var t=localStorage.getItem('blinkroom-theme');if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';document.documentElement.classList.toggle('dark',t==='dark');document.documentElement.style.colorScheme=t}catch(e){}})()`;
+  const measurementId = process.env.NODE_ENV === "production" ? process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID : undefined;
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -53,6 +55,7 @@ export default function RootLayout({
         <ThemeProvider>
           {children}
           <PwaRegistration />
+          <AnalyticsProvider measurementId={measurementId} />
         </ThemeProvider>
       </body>
     </html>

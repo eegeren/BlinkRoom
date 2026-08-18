@@ -44,6 +44,7 @@ import { WebRTCTransport } from "@/src/lib/transport/webrtc";
 import { selectTransport } from "@/src/lib/transport/selection";
 import { fetchEncryptedFile } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
+import { errorCategory, lifetimeBucket, sizeBucket, trackEvent, type Transport } from "@/src/lib/analytics";
 import type { Socket } from "socket.io-client";
 
 type Upload = {
@@ -431,6 +432,7 @@ export function RoomClient({
   const transportConfig = useRef<WebRTCConfig | null>(null);
   const storageConfig = useRef<StorageConfig | null>(null);
   const participantsRef = useRef<Participant[]>([]);
+  const roomRef = useRef<PublicRoom | null>(null), autoDestroyPending = useRef(false);
 
   const replaceItems = useCallback((next: DecryptedItem[]) => {
     for (const item of itemsRef.current)
@@ -730,10 +732,13 @@ export function RoomClient({
       );
     });
     socket.on("room:destroy", () => {
+      const remaining = roomRef.current ? Math.max(0, new Date(roomRef.current.expiresAt).getTime() - Date.now()) : 0;
+      trackEvent("room_destroyed", { reason: autoDestroyPending.current ? "auto_empty" : "owner", room_lifetime_bucket: lifetimeBucket(remaining) }, "room-destroyed");
       clearSecrets();
       setError("destroyed");
     });
     socket.on("room:expired", () => {
+      trackEvent("room_destroyed", { reason: "expiration", room_lifetime_bucket: "lt_10m" }, "room-destroyed");
       clearSecrets();
       setError("expired");
     });
@@ -742,6 +747,7 @@ export function RoomClient({
       ({ expiresAt }: { expiresAt: string }) =>
         setRoom((current) => (current ? { ...current, expiresAt } : current)),
     );
+    socket.on("room:auto-destroy-pending", () => { autoDestroyPending.current = true; });
     socket.on(
       "room:settings-updated",
       (settings: { autoDestroyWhenEmpty: boolean; directOnly: boolean }) =>
@@ -786,6 +792,7 @@ export function RoomClient({
       window.removeEventListener("offline", offline);
     };
   }, [clearSecrets, cryptoKey, decryptItem, isOwner, replaceItems, slug, sync]);
+  useEffect(() => { roomRef.current = room; }, [room]);
   useEffect(() => {
     queueMicrotask(() => setNow(Date.now()));
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -828,15 +835,27 @@ export function RoomClient({
           encryptedPayload,
         }),
       });
-      if (res.ok) setDraft("");
+      if (res.ok) { setDraft(""); trackEvent("item_shared", { item_type: type === "LINK" ? "link" : "text", transport: "p2p", one_time: false, direct_only: Boolean(room?.directOnly) }, `item:${itemId}`); }
     },
-    [draft, identity.id, senderName, slug],
+    [draft, identity.id, room?.directOnly, senderName, slug],
   );
   const uploadOne = useCallback(
-    async (file: File, existingId?: string, oneTime = false) => {
+    async (
+      file: File,
+      existingId?: string,
+      oneTime = false,
+      resumeSource: "manual" | "reconnect" | "reload" = "manual",
+    ) => {
       const key = keyRef.current;
       if (!key || !identity.id) return;
       const id = existingId ?? crypto.randomUUID();
+      const bucket = sizeBucket(file.size); let analyticsTransport: Transport = "r2";
+      if (existingId)
+        trackEvent(
+          "upload_resumed",
+          { size_bucket: bucket, resume_source: resumeSource },
+          `resume:${id}`,
+        );
       if (transferControllers.current.has(id)) return;
       const controller = new AbortController();
       transferControllers.current.set(id, controller);
@@ -892,6 +911,9 @@ export function RoomClient({
             config.maxDirectPeers,
             typeof RTCPeerConnection !== "undefined",
           ) === "DIRECT";
+        analyticsTransport = direct ? "p2p" : "r2";
+        trackEvent("file_upload_started", { transport_target: analyticsTransport, size_bucket: bucket, direct_only: Boolean(room?.directOnly) }, `start:${id}`);
+        const trackCompleted = (transport: Transport) => { trackEvent("file_upload_completed", { transport, size_bucket: bucket, resumed: Boolean(existingId), one_time: oneTime }, `complete:${id}`); trackEvent("item_shared", { item_type: type === "IMAGE" ? "image" : "file", transport, one_time: oneTime, direct_only: Boolean(room?.directOnly), size_bucket: bucket }, `item:${id}`); if (transport === "p2p") trackEvent("successful_transfer", { transport, size_bucket: bucket, direct_only: Boolean(room?.directOnly), one_time: oneTime }, `transfer:${id}`); if (oneTime) trackEvent("one_time_file_shared", { item_type: type === "IMAGE" ? "image" : "file", transport }, `one-time:${id}`); };
         if (room?.directOnly && !direct)
           throw new Error("Direct transfer unavailable.");
         if (
@@ -942,6 +964,7 @@ export function RoomClient({
                 : item,
             ),
           );
+          trackCompleted("r2");
           setTimeout(
             () =>
               setUploads((current) => current.filter((item) => item.id !== id)),
@@ -1000,6 +1023,7 @@ export function RoomClient({
               signal: controller.signal,
             });
             if (response.ok) {
+              trackCompleted("p2p");
               setUploads((current) =>
                 current.map((item) =>
                   item.id === id
@@ -1029,6 +1053,7 @@ export function RoomClient({
                 : item,
             ),
           );
+          trackCompleted("r2");
           await uploadMultipartStorage({
             slug,
             itemId: id,
@@ -1100,6 +1125,7 @@ export function RoomClient({
             pendingXhrs.current.delete(xhr);
             controller.signal.removeEventListener("abort", abort);
             if (xhr.status < 300) {
+              trackCompleted("r2");
               setUploads((current) =>
                 current.map((item) =>
                   item.id === id
@@ -1114,7 +1140,16 @@ export function RoomClient({
                   ),
                 900,
               );
-            } else
+            } else {
+              trackEvent(
+                "file_upload_failed",
+                {
+                  transport: "r2",
+                  size_bucket: bucket,
+                  error_category: "storage",
+                },
+                `failed:${id}:storage`,
+              );
               setUploads((current) =>
                 current.map((item) =>
                   item.id === id
@@ -1122,10 +1157,20 @@ export function RoomClient({
                     : item,
                 ),
               );
+            }
             resolve();
           };
           xhr.onerror = () => {
             pendingXhrs.current.delete(xhr);
+            trackEvent(
+              "file_upload_failed",
+              {
+                transport: "r2",
+                size_bucket: bucket,
+                error_category: "network",
+              },
+              `failed:${id}:network`,
+            );
             setUploads((current) =>
               current.map((item) =>
                 item.id === id
@@ -1137,6 +1182,15 @@ export function RoomClient({
           };
           xhr.onabort = () => {
             pendingXhrs.current.delete(xhr);
+            trackEvent(
+              "file_upload_failed",
+              {
+                transport: "r2",
+                size_bucket: bucket,
+                error_category: "cancelled",
+              },
+              `failed:${id}:cancelled`,
+            );
             setUploads((current) =>
               current.map((item) =>
                 item.id === id
@@ -1149,6 +1203,7 @@ export function RoomClient({
           xhr.send(form);
         });
       } catch (cause) {
+        trackEvent("file_upload_failed", { transport: analyticsTransport, size_bucket: bucket, error_category: errorCategory(cause) }, `failed:${id}:${errorCategory(cause)}`);
         const message = cause instanceof Error ? cause.message : "";
         const disconnected = !navigator.onLine;
         const cancelled =
@@ -1191,7 +1246,23 @@ export function RoomClient({
     },
     [oneTimeNext, uploadOne],
   );
-  useEffect(() => { const resume = () => { for (const upload of uploads) if (upload.status === "paused") { setUploads(current => current.map(item => item.id === upload.id ? { ...item, status: "resuming", error: undefined } : item)); void uploadOne(upload.file, upload.id); } }; window.addEventListener("online", resume); return () => window.removeEventListener("online", resume); }, [uploadOne, uploads]);
+  useEffect(() => {
+    const resume = () => {
+      for (const upload of uploads)
+        if (upload.status === "paused") {
+          setUploads((current) =>
+            current.map((item) =>
+              item.id === upload.id
+                ? { ...item, status: "resuming", error: undefined }
+                : item,
+            ),
+          );
+          void uploadOne(upload.file, upload.id, false, "reconnect");
+        }
+    };
+    window.addEventListener("online", resume);
+    return () => window.removeEventListener("online", resume);
+  }, [uploadOne, uploads]);
   useEffect(() => { if (!cryptoKey) return; void takeSharedInbox().then(async incoming => { if (!incoming || Date.now() - incoming.createdAt > 15 * 60_000) return; if (incoming.text.trim()) await shareText(incoming.text); if (incoming.files.length) await uploadFiles(incoming.files); }); }, [cryptoKey, shareText, uploadFiles]);
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
@@ -1254,6 +1325,8 @@ export function RoomClient({
   async function downloadItem(item: DecryptedItem) {
     const key = keyRef.current;
     if (!key || !item.fileName || !item.mimeType) return;
+    const transport: Transport = item.availability === "DIRECT" ? "p2p" : "r2", bucket = sizeBucket(item.fileSize ?? 0);
+    trackEvent("file_download_started", { transport, size_bucket: bucket, one_time: item.oneTime }, `download-start:${item.id}`);
     try {
       let consumeToken: string | undefined;
       if (item.oneTime) {
@@ -1290,8 +1363,12 @@ export function RoomClient({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "complete", consumeToken }),
         });
+      trackEvent("file_download_completed", { transport, size_bucket: bucket, one_time: item.oneTime }, `download-complete:${item.id}`);
+      trackEvent("successful_transfer", { transport, size_bucket: bucket, direct_only: Boolean(room?.directOnly), one_time: item.oneTime }, `transfer:${item.id}`);
+      if (consumeToken) trackEvent("one_time_file_consumed", { transport }, `consumed:${item.id}`);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
+    } catch (cause) {
+      trackEvent("file_download_failed", { transport, size_bucket: bucket, error_category: errorCategory(cause) }, `download-failed:${item.id}:${errorCategory(cause)}`);
       setFeedback(
         item.availability === "DIRECT"
           ? "No longer available."
@@ -1303,6 +1380,7 @@ export function RoomClient({
   async function destroyRoom() {
     const res = await fetch(`/api/rooms/${slug}`, { method: "DELETE" });
     if (res.ok) {
+      trackEvent("room_destroyed", { reason: "owner", room_lifetime_bucket: lifetimeBucket(left) }, "room-destroyed");
       clearSecrets();
       setError("destroyed");
     }
@@ -1350,6 +1428,8 @@ export function RoomClient({
       directOnly: boolean;
     };
     setRoom((current) => (current ? { ...current, ...settings } : current));
+    if (value && setting === "directOnly") trackEvent("direct_only_enabled", {}, "direct-only-enabled");
+    if (value && setting === "autoDestroyWhenEmpty") trackEvent("auto_destroy_enabled", {}, "auto-destroy-enabled");
     setFeedback("Room settings updated.");
     setTimeout(() => setFeedback(""), 1600);
   }
