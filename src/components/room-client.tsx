@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Check,
   ChevronUp,
+  Download,
   FileUp,
   Image as ImageIcon,
   LockKeyhole,
@@ -415,6 +416,7 @@ export function RoomClient({
   const [menu, setMenu] = useState(false);
   const [lifetime, setLifetime] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [draft, setDraft] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const [dragging, setDragging] = useState(false);
@@ -1316,6 +1318,15 @@ export function RoomClient({
   const left = Math.max(0, new Date(room.expiresAt).getTime() - now);
   const timerLabel = formatRemaining(left);
   const roomUrl = typeof window !== "undefined" ? window.location.href : "";
+  const storedFiles = items.filter(
+    (item) =>
+      (item.type === "FILE" || item.type === "IMAGE") &&
+      item.availability !== "DIRECT" &&
+      item.locallyAvailable &&
+      item.fileName &&
+      item.mimeType &&
+      item.oneTimeStatus !== "CONSUMED",
+  );
   async function deleteItem(id: string) {
     await fetch(`/api/rooms/${slug}/items/${id}`, {
       method: "DELETE",
@@ -1375,6 +1386,80 @@ export function RoomClient({
           : "Unable to decrypt file.",
       );
       setTimeout(() => setFeedback(""), 1600);
+    }
+  }
+  async function downloadAll() {
+    const key = keyRef.current;
+    if (!key || storedFiles.length < 2 || downloadingAll) return;
+    setDownloadingAll(true);
+    const consumed: { id: string; token: string }[] = [];
+    try {
+      const usedNames = new Set<string>();
+      const files: { name: string; input: Blob }[] = [];
+      for (const [index, item] of storedFiles.entries()) {
+        let consumeToken: string | undefined;
+        if (item.oneTime) {
+          const reserved = await fetch(
+            `/api/rooms/${slug}/items/${item.id}/consume`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "reserve" }),
+            },
+          );
+          if (!reserved.ok) throw new Error("No longer available");
+          consumeToken = ((await reserved.json()) as { consumeToken: string })
+            .consumeToken;
+        }
+        const encrypted =
+          directBlobs.current.get(item.id) ??
+          (await fetchEncryptedFile(slug, item.id, fetch, consumeToken));
+        const blob = await decryptFileChunks(
+          key,
+          encrypted,
+          slug,
+          item.id,
+          item.mimeType!,
+        );
+        const safeName =
+          item.fileName!
+            .replace(/[\\/]/g, "_")
+            .replace(/[\u0000-\u001f\u007f]/g, "_")
+            .trim() || `file-${index + 1}`;
+        const dot = safeName.lastIndexOf(".");
+        const stem = dot > 0 ? safeName.slice(0, dot) : safeName;
+        const extension = dot > 0 ? safeName.slice(dot) : "";
+        let archiveName = safeName;
+        let duplicate = 2;
+        while (usedNames.has(archiveName))
+          archiveName = `${stem} (${duplicate++})${extension}`;
+        usedNames.add(archiveName);
+        files.push({ name: archiveName, input: blob });
+        if (consumeToken)
+          consumed.push({ id: item.id, token: consumeToken });
+      }
+      const { downloadZip } = await import("client-zip");
+      const zip = await downloadZip(files).blob();
+      const url = URL.createObjectURL(zip);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `BlinkRoom-${slug}.zip`;
+      anchor.click();
+      anchor.remove();
+      for (const item of consumed)
+        await fetch(`/api/rooms/${slug}/items/${item.id}/consume`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "complete", consumeToken: item.token }),
+        });
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setFeedback(`${files.length} files downloaded.`);
+      setTimeout(() => setFeedback(""), 1600);
+    } catch {
+      setFeedback("Unable to download all files.");
+      setTimeout(() => setFeedback(""), 2200);
+    } finally {
+      setDownloadingAll(false);
     }
   }
   async function destroyRoom() {
@@ -1603,7 +1688,19 @@ export function RoomClient({
       <section className="timeline">
         <div className="timeline-intro">
           <span>SHARED IN THIS ROOM</span>
-          <p>Everything here disappears when the room ends.</p>
+          <div className="timeline-intro-actions">
+            <p>Everything here disappears when the room ends.</p>
+            {storedFiles.length > 1 && (
+              <button
+                className="download-all"
+                onClick={downloadAll}
+                disabled={downloadingAll}
+              >
+                <Download />
+                {downloadingAll ? "Preparing…" : "Download All"}
+              </button>
+            )}
+          </div>
         </div>
         {!items.length && !uploads.length && (
           <div className="empty">
