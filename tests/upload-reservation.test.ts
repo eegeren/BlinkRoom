@@ -23,6 +23,55 @@ test("PostgreSQL advisory reservation lock does not deserialize void and creates
   } finally { await db.room.delete({ where: { id: room.id } }); }
 });
 
+test("same item retry reuses a resumable multipart session without a duplicate row", async () => {
+  const room = await roomFixture(), upload = input();
+  try {
+    const first = await reserveUploadSession(room, upload, `rooms/${room.slug}/${randomUUID()}.bin`, randomUUID());
+    await db.uploadSession.update({ where: { id: first.id }, data: { status: "UPLOADING", multipartUploadId: "existing-r2-upload" } });
+    const retried = await reserveUploadSession(room, { ...upload, encryptedMetadata: input().encryptedMetadata }, `rooms/${room.slug}/${randomUUID()}.bin`, randomUUID());
+    assert.equal(retried.action, "reuse");
+    assert.equal(retried.id, first.id);
+    assert.equal(await db.uploadSession.count({ where: { itemId: upload.itemId } }), 1);
+  } finally { await db.room.delete({ where: { id: room.id } }); }
+});
+
+test("failed session is reset in place and counted as one reservation", async () => {
+  const room = await roomFixture(), upload = input(), firstKey = `rooms/${room.slug}/${randomUUID()}.bin`;
+  try {
+    const first = await reserveUploadSession(room, upload, firstKey, randomUUID());
+    await db.uploadSession.update({ where: { id: first.id }, data: { status: "FAILED", multipartUploadId: "abandoned-r2-upload" } });
+    const replacementKey = `rooms/${room.slug}/${randomUUID()}.bin`;
+    const replaced = await reserveUploadSession(room, upload, replacementKey, randomUUID());
+    assert.equal(replaced.action, "replace");
+    assert.equal(replaced.id, first.id);
+    assert.deepEqual(replaced.replacedMultipart, { storageKey: firstKey, uploadId: "abandoned-r2-upload" });
+    assert.equal(await db.uploadSession.count({ where: { itemId: upload.itemId } }), 1);
+    assert.equal(await db.uploadSession.count({ where: { roomId: room.id, status: "PENDING" } }), 1);
+  } finally { await db.room.delete({ where: { id: room.id } }); }
+});
+
+test("concurrent initialization for the same item creates exactly one reservation", async () => {
+  const room = await roomFixture(), upload = input();
+  try {
+    const results = await Promise.allSettled([
+      reserveUploadSession(room, upload, `rooms/${room.slug}/${randomUUID()}.bin`, randomUUID()),
+      reserveUploadSession(room, upload, `rooms/${room.slug}/${randomUUID()}.bin`, randomUUID()),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+    assert.equal(await db.uploadSession.count({ where: { itemId: upload.itemId } }), 1);
+  } finally { await db.room.delete({ where: { id: room.id } }); }
+});
+
+test("completed item cannot initialize another upload session", async () => {
+  const room = await roomFixture(), upload = input();
+  try {
+    await db.roomItem.create({ data: { id: upload.itemId, roomId: room.id, senderId: upload.senderId, type: upload.type, encryptedMetadata: upload.encryptedMetadata, encryptedSize: upload.encryptedSize, availability: "STORED" } });
+    await assert.rejects(reserveUploadSession(room, upload, `rooms/${room.slug}/${randomUUID()}.bin`, randomUUID()), /item/);
+    assert.equal(await db.uploadSession.count({ where: { itemId: upload.itemId } }), 0);
+  } finally { await db.room.delete({ where: { id: room.id } }); }
+});
+
 test("room lock serializes concurrent reservations at the configured quota", async () => {
   const room = await roomFixture();
   try {

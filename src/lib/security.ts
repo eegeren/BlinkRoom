@@ -1,7 +1,8 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const ownerToken = () => randomBytes(32).toString("base64url");
 export const tokenHash = (value: string) => createHash("sha256").update(value).digest("hex");
+export const retryUploadToken = (sessionId: string, secret: string) => createHmac("sha256", secret).update(`blinkroom:upload-session:${sessionId}`).digest("base64url");
 export function roomSlug() {
   const bytes = randomBytes(6);
   const chars = Array.from(bytes, (b) => alphabet[b % alphabet.length]);
