@@ -41,6 +41,12 @@ enum CleanupStatus {
   COMPLETED
 }
 
+enum OneTimeStatus {
+  AVAILABLE
+  RESERVED
+  CONSUMED
+}
+
 model Room {
   id             String      @id @default(uuid())
   slug           String      @unique
@@ -55,10 +61,26 @@ model Room {
   cleanupAttempts Int          @default(0)
   cleanupLastError String?
   cleanupUpdatedAt DateTime?
+  autoDestroyWhenEmpty Boolean @default(false)
+  autoDestroyEmptySince DateTime?
+  directOnly     Boolean      @default(false)
   items          RoomItem[]
   uploadSessions UploadSession[]
+  presences      RoomPresence[]
   @@index([status, expiresAt])
   @@index([status, cleanupStatus])
+}
+
+model RoomPresence {
+  id            String   @id @default(uuid())
+  roomId        String
+  room          Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  socketId      String   @unique
+  participantId String
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@index([roomId, expiresAt])
 }
 
 model UploadSession {
@@ -75,12 +97,31 @@ model UploadSession {
   encryptedMetadata String
   encryptedSize     BigInt
   directDelivered   Boolean      @default(false)
+  oneTime            Boolean      @default(false)
+  fileFingerprint    String?
+  partSize           Int          @default(10485760)
+  totalParts         Int          @default(0)
   status             UploadStatus @default(PENDING)
   createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
   completedAt        DateTime?
   expiresAt          DateTime
+  parts              UploadPart[]
   @@index([roomId, status])
   @@index([status, createdAt])
+}
+
+model UploadPart {
+  id           String        @id @default(uuid())
+  sessionId    String
+  session      UploadSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  partNumber   Int
+  etag         String
+  size         Int
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  @@unique([sessionId, partNumber])
+  @@index([sessionId])
 }
 
 model RoomItem {
@@ -95,6 +136,11 @@ model RoomItem {
   encryptedSize     Int?
   storageKey        String?
   availability      ItemAvailability @default(STORED)
+  oneTime           Boolean @default(false)
+  oneTimeStatus     OneTimeStatus @default(AVAILABLE)
+  consumeTokenHash  String?
+  consumeReservedAt DateTime?
+  consumedAt        DateTime?
   createdAt         DateTime @default(now())
   @@index([roomId, createdAt])
 }

@@ -20,3 +20,9 @@ Deployments must run `prisma migrate deploy` before application startup. The rep
 ### Orphan safety
 
 Inactive-room prefix cleanup is safe because the room has already become inaccessible. Provider-level multipart cleanup uses the configured stale threshold. BlinkRoom does not automatically delete arbitrary R2 objects that have no database reference: distinguishing a true orphan from a temporarily inconsistent active upload requires an inventory/reconciliation process. Any manual orphan-object reconciliation should use `ORPHAN_GRACE_HOURS` (default 24 hours), verify that no `RoomItem` or `UploadSession` references the key, and never delete objects belonging to active rooms.
+
+## PWA and production feature support
+
+BlinkRoom is installable in current Chromium desktop and Android browsers. Android Web Share Target accepts files, images, text, and URLs into a browser-only IndexedDB inbox, asks for confirmation, then clears the inbox while content is encrypted and shared. iOS Safari does not currently expose installed web apps as general file share targets. The service worker caches only the homepage and icon assets; room pages, APIs, WebSocket traffic, signed R2 URLs, and user objects are never cached.
+
+Deploy with `prisma migrate deploy`. `AUTO_DESTROY_GRACE_SECONDS` defaults to 30, `PRESENCE_LEASE_SECONDS` to 60, and `ONE_TIME_RESERVATION_SECONDS` to 300. Multiple instances coordinate presence leases and one-time reservations in PostgreSQL. Direct-only rooms reject both multipart and local storage routes server-side.
