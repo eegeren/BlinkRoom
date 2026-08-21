@@ -32,3 +32,13 @@ Deploy with `prisma migrate deploy`. `AUTO_DESTROY_GRACE_SECONDS` defaults to 30
 Production analytics is enabled only when Railway builds with `NEXT_PUBLIC_GA_MEASUREMENT_ID=G-161QZ8MP4C`; public env changes require a rebuild. `NEXT_PUBLIC_ANALYTICS_DEBUG=true` enables safe development diagnostics. BlinkRoom measures coarse product actions such as room creation and successful transfers. Room slugs, URL fragments, invite keys, filenames, content, exact sizes, storage/session IDs, peer IDs, and signed URLs are never event parameters. Consent Mode defaults analytics storage to denied and exposes `setAnalyticsConsent` for a future consent UI.
 
 In GA Admin, disable Enhanced Measurement’s automatic page changes/history events, outbound clicks, form interactions, and site search. BlinkRoom sends its own sanitized page views (`/r/[room]`) and allowlisted events. Mark `room_created`, `file_upload_completed`, and `file_download_completed` as key events; `successful_transfer` is the preferred future Ads conversion signal. No Google Ads tag is installed.
+
+## Privacy-First Analytics
+
+BlinkRoom stores hourly aggregate counters for anonymous sessions, page views, rooms created, successful/failed transfers, and transferred encrypted byte totals. Active rooms are calculated from the Room table. It never stores IP addresses, room codes/IDs, file IDs or names, URLs, email, raw User-Agent values, fingerprints, encryption metadata, or a persistent visitor identifier.
+
+The browser creates a random UUID in `sessionStorage` and rotates it after 30 minutes of inactivity. The server stores only its SHA-256 digest for at most 30 minutes to deduplicate the visit, then retains only aggregate counters. Page-view payloads contain no URL or path.
+
+Set `ADMIN_ANALYTICS_TOKEN` to at least 32 cryptographically random characters. `/admin/analytics` exchanges it server-side for an HttpOnly, SameSite=Strict cookie; it is never embedded in the browser bundle or accepted in a query string. The internal API also supports `Authorization: Bearer <token>`.
+
+Run `npx prisma migrate deploy` during deployment (already part of `npm start`). Metrics begin at the first event after this migration and are never backfilled. The R2 download count means a signed download URL was successfully issued, which is the last completion point observable by the application server; local downloads are counted when the encrypted stream opens successfully.

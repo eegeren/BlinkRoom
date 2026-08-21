@@ -10,6 +10,7 @@ import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { storage } from "@/src/server/storage";
 import { validateStorageQuota } from "@/src/server/storage/quota";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
+import { trackMetric } from "@/src/server/analytics";
 
 export const runtime = "nodejs";
 const meta = z
@@ -104,6 +105,7 @@ export async function POST(
   try {
     upload = await parseUpload(req, slug);
   } catch {
+    await trackMetric("UPLOAD_FAILED");
     return NextResponse.json(
       { error: "Invalid encrypted upload" },
       { status: 400 },
@@ -112,6 +114,7 @@ export async function POST(
   const parsed = meta.safeParse(upload.fields);
   if (!parsed.success) {
     await storage.deleteObject(upload.storageKey);
+    await trackMetric("UPLOAD_FAILED");
     return NextResponse.json(
       { error: "Invalid encrypted metadata" },
       { status: 400 },
@@ -123,6 +126,7 @@ export async function POST(
   }
   if (upload.truncated) {
     await storage.deleteObject(upload.storageKey);
+    await trackMetric("UPLOAD_FAILED");
     return NextResponse.json(
       { error: "Encrypted upload is too large" },
       { status: 413 },
@@ -246,9 +250,11 @@ export async function POST(
         createdAt: item.createdAt.toISOString(),
       };
     roomChannel.itemCreated(slug, output);
+    await trackMetric("UPLOAD_COMPLETED", { bytes: upload.size });
     return NextResponse.json(output, { status: result.existing ? 200 : 201 });
   } catch (error) {
     await storage.deleteObject(upload.storageKey);
+    await trackMetric("UPLOAD_FAILED");
     throw error;
   }
 }

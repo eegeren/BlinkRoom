@@ -5,6 +5,7 @@ import { tokenHash } from "@/src/lib/security";
 import { roomChannel } from "@/src/server/realtime";
 import { storage } from "@/src/server/storage";
 import { acquireRoomLock } from "@/src/server/rooms";
+import { trackMetric } from "@/src/server/analytics";
 const completeSchema = z
   .object({
     parts: z
@@ -109,15 +110,17 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       { timeout: 30_000 },
     );
     if ("unavailable" in result)
+      { await trackMetric("UPLOAD_FAILED");
       return NextResponse.json(
         { error: "Upload unavailable" },
         { status: 410 },
-      );
+      ); }
     if ("sizeMismatch" in result)
+      { await trackMetric("UPLOAD_FAILED");
       return NextResponse.json(
         { error: "Encrypted upload size mismatch" },
         { status: 400 },
-      );
+      ); }
     const item = result.item,
       output = {
         id: item.id,
@@ -133,6 +136,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         createdAt: item.createdAt.toISOString(),
       };
     roomChannel.itemCreated(slug, output);
+    await trackMetric("UPLOAD_COMPLETED", { bytes: Number(session.encryptedSize) });
     return NextResponse.json(output);
   } catch {
     await db.uploadSession.updateMany({
@@ -143,6 +147,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       },
       data: { status: "FAILED" },
     });
+    await trackMetric("UPLOAD_FAILED");
     return NextResponse.json(
       { error: "Temporary storage is unavailable right now." },
       { status: 503 },

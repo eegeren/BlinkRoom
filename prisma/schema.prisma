@@ -144,3 +144,28 @@ model RoomItem {
   createdAt         DateTime @default(now())
   @@index([roomId, createdAt])
 }
+
+/// Privacy-first, product-wide counters. No room, file, visitor, URL, or
+/// request identifiers are stored in this table.
+model AnalyticsHourly {
+  id              String   @id @default(uuid())
+  bucketStart     DateTime @unique
+  sessions        BigInt   @default(0)
+  pageViews       BigInt   @default(0)
+  roomsCreated    BigInt   @default(0)
+  filesUploaded   BigInt   @default(0)
+  filesDownloaded BigInt   @default(0)
+  uploadBytes     BigInt   @default(0)
+  downloadBytes   BigInt   @default(0)
+  failedUploads   BigInt   @default(0)
+  failedDownloads BigInt   @default(0)
+}
+
+/// A short-lived SHA-256 digest of a random sessionStorage UUID. It exists
+/// only to deduplicate SESSION_STARTED and cannot link events or product data.
+model AnalyticsSessionDedupe {
+  sessionHash String   @id
+  expiresAt   DateTime
+
+  @@index([expiresAt])
+}

@@ -4,6 +4,7 @@ import { ephemeralRequestKey, ownerToken, roomSlug, tokenHash } from "@/src/lib/
 import { env } from "@/src/lib/env";
 import { rateLimiter } from "@/src/server/rate-limit";
 import { roomDurationSchema } from "@/src/lib/duration";
+import { trackMetric } from "@/src/server/analytics";
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
   while (await db.room.findUnique({ where: { slug }, select: { id: true } })) slug = roomSlug();
   const createdAt = new Date();
   const room = await db.room.create({ data: { slug, createdAt, ownerTokenHash: tokenHash(token), expiresAt: new Date(createdAt.getTime() + input.data.ttlHours * 3_600_000) } });
+  await trackMetric("ROOM_CREATED");
   const res = NextResponse.json({ slug: room.slug });
   res.cookies.set(`blinkroom_owner_${slug}`, token, { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production", path: `/`, expires: room.expiresAt });
   return res;

@@ -5,6 +5,16 @@ import { isAnalyticsEnabled, trackPageView } from "@/src/lib/analytics";
 export function AnalyticsProvider({ measurementId }: { measurementId?: string }) {
   const pathname = usePathname(), enabled = isAnalyticsEnabled() && Boolean(measurementId);
   const lastPath = useRef("");
+  const metricsLastPath = useRef("");
+  useEffect(() => {
+    if (metricsLastPath.current === pathname) return;
+    metricsLastPath.current = pathname;
+    const now = Date.now(), idKey = "blinkroom_metrics_session", activityKey = "blinkroom_metrics_activity";
+    let sessionId = sessionStorage.getItem(idKey); const lastActivity = Number(sessionStorage.getItem(activityKey) ?? 0);
+    if (!sessionId || !lastActivity || now - lastActivity >= 30 * 60_000) { sessionId = crypto.randomUUID(); sessionStorage.setItem(idKey, sessionId); void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "SESSION_STARTED", sessionId }), keepalive: true }); }
+    sessionStorage.setItem(activityKey, String(now));
+    void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: "PAGE_VIEW" }), keepalive: true });
+  }, [pathname]);
   useEffect(() => {
     if (!enabled || !measurementId) return;
     if (!window.gtag) {

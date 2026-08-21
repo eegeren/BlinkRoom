@@ -61,6 +61,10 @@ const baseSchema = z.object({
     .transform((value) => value === "true")
     .default("false"),
   CLEANUP_SECRET: z.string().min(16),
+  ADMIN_ANALYTICS_TOKEN: optionalTrimmed.refine(
+    (value) => !value || value.length >= 32,
+    "ADMIN_ANALYTICS_TOKEN must be at least 32 characters",
+  ),
   WEBRTC_STUN_URLS: z.string().default("stun:stun.l.google.com:19302"),
   WEBRTC_TURN_URLS: z.string().default(""),
   WEBRTC_TURN_USERNAME: z.string().default(""),
