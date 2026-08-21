@@ -58,6 +58,7 @@ import { takeSharedInbox } from "@/src/lib/share-inbox";
 import { takePendingRoomUpload } from "@/src/lib/pending-room-upload";
 import { uploadValidationError } from "@/src/lib/upload-validation";
 import { filesFromDropSnapshot, snapshotDrop } from "@/src/lib/drop-files";
+import { createQueuedUploads } from "@/src/lib/upload-queue";
 
 import {
   errorCategory,
@@ -74,6 +75,7 @@ type Upload = {
   file: File;
   progress: number;
   status:
+    | "queued"
     | "encrypting"
     | "sending"
     | "uploading"
@@ -1795,6 +1797,7 @@ export function RoomClient({
         | "manual"
         | "reconnect"
         | "reload" = "manual",
+      prequeued = false,
     ) => {
       const key = keyRef.current;
 
@@ -1812,7 +1815,7 @@ export function RoomClient({
       let analyticsTransport: Transport =
         "r2";
 
-      if (existingId) {
+      if (existingId && !prequeued) {
         trackEvent(
           "upload_resumed",
           {
@@ -2781,12 +2784,13 @@ export function RoomClient({
 
       setOneTimeNext(false);
 
-      const queue =
-        Array.from(files);
+      const queue = createQueuedUploads(files);
 
       if (!queue.length) {
         return;
       }
+
+      setUploads((current) => [...current, ...queue]);
 
       const workerCount =
         Math.min(
@@ -2800,17 +2804,19 @@ export function RoomClient({
         },
         async () => {
           while (queue.length) {
-            const file =
+            const upload =
               queue.shift();
 
-            if (!file) {
+            if (!upload) {
               return;
             }
 
             await uploadOne(
-              file,
-              undefined,
+              upload.file,
+              upload.id,
               oneTime,
+              "manual",
+              true,
             );
           }
         },
@@ -4193,6 +4199,9 @@ export function RoomClient({
 
                   <span>
                     {upload.status ===
+                    "queued"
+                      ? "Preparing upload…"
+                      : upload.status ===
                     "paused"
                       ? "Paused — connection lost"
                       : upload.status ===

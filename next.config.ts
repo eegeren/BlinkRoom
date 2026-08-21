@@ -3,6 +3,13 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   turbopack: { root: process.cwd() },
   experimental: { serverActions: { bodySizeLimit: "2mb" } },
+  async redirects() {
+    return [{
+      source: "/wetransfer-alternative",
+      destination: "/secure-file-sharing",
+      permanent: true,
+    }];
+  },
   async headers() {
     return [{
       source: "/:path*",

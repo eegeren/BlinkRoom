@@ -1,0 +1,14 @@
+import Link from "next/link";
+import { LockKeyhole } from "lucide-react";
+import { brand } from "@/src/config/brand";
+import { SeoCreateRoom } from "./seo-create-room";
+
+export type SeoFaq = { question: string; answer: string };
+export type SeoSection = { eyebrow: string; title: string; paragraphs: string[]; points?: string[] };
+export type SeoLandingProps = { path: string; eyebrow: string; title: string; intro: string; proof: string; steps: Array<{ title: string; text: string }>; sections: SeoSection[]; faqs: SeoFaq[]; related: Array<{ href: string; label: string }> };
+export const faqStructuredData = (faqs: SeoFaq[]) => ({ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: faqs.map((faq) => ({ "@type": "Question", name: faq.question, acceptedAnswer: { "@type": "Answer", text: faq.answer } })) });
+
+export function SeoLanding(props: SeoLandingProps) {
+  const faqJson = JSON.stringify(faqStructuredData(props.faqs)).replace(/</g, "\\u003c");
+  return <div className="seo-page"><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: faqJson }} /><header className="seo-header"><Link className="wordmark" href="/">{brand.name}<i /></Link><Link href="/" className="seo-home-link">Home</Link></header><main><section className="seo-hero"><p className="seo-eyebrow">{props.eyebrow}</p><h1>{props.title}</h1><p className="seo-intro">{props.intro}</p><SeoCreateRoom /><div className="seo-proof"><LockKeyhole aria-hidden="true" /><span>{props.proof}</span></div></section><section className="seo-steps" aria-labelledby="how-it-works"><div><p className="seo-eyebrow">HOW IT WORKS</p><h2 id="how-it-works">From file to shared room.</h2></div><ol>{props.steps.map((step, index) => <li key={step.title}><span>0{index + 1}</span><h3>{step.title}</h3><p>{step.text}</p></li>)}</ol></section>{props.sections.map((section) => <section className="seo-content" key={section.title}><div><p className="seo-eyebrow">{section.eyebrow}</p><h2>{section.title}</h2></div><div>{section.paragraphs.map((text) => <p key={text}>{text}</p>)}{section.points && <ul>{section.points.map((point) => <li key={point}>{point}</li>)}</ul>}</div></section>)}<section className="seo-faq"><p className="seo-eyebrow">QUESTIONS, ANSWERED</p><h2>Before you share.</h2><div>{props.faqs.map((faq) => <details key={faq.question}><summary>{faq.question}</summary><p>{faq.answer}</p></details>)}</div></section><section className="seo-final"><h2>Ready when you are.</h2><p>Open a temporary room and share without creating an account.</p><SeoCreateRoom /></section></main><footer className="seo-footer"><Link className="wordmark" href="/">{brand.name}<i /></Link><nav aria-label="Related file-sharing guides">{props.related.map((link) => <Link href={link.href} key={link.href}>{link.label}</Link>)}</nav><span>Private by default · Gone by design</span></footer></div>;
+}

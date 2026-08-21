@@ -5,6 +5,7 @@ export const metadata: Metadata = { alternates: { canonical: "/" } };
 const schemas = [
   { "@context": "https://schema.org", "@type": "WebApplication", name: "BlinkRoom", url: "https://blinkroom.org", applicationCategory: "UtilitiesApplication", operatingSystem: "Web", offers: { "@type": "Offer", price: 0, priceCurrency: "USD" } },
   { "@context": "https://schema.org", "@type": "WebSite", name: "BlinkRoom", url: "https://blinkroom.org" },
+  { "@context": "https://schema.org", "@type": "Organization", name: "BlinkRoom", url: "https://blinkroom.org", logo: "https://blinkroom.org/icon-512.png" },
 ];
 const safeJsonLd = JSON.stringify(schemas).replace(/</g, "\\u003c");
 

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { clearPendingRoomUpload, setPendingRoomUpload, takePendingRoomUpload } from "../src/lib/pending-room-upload";
 import { uploadBatchValidationError, uploadValidationError } from "../src/lib/upload-validation";
 import { filesFromDropSnapshot } from "../src/lib/drop-files";
+import { createQueuedUploads } from "../src/lib/upload-queue";
+import { clearPendingRoomCreation, getPendingRoomCreation, preparePendingRoomCreation, startPendingRoomCreation } from "../src/lib/pending-room-creation";
 
 test("instant-drop files remain in memory and are consumed exactly once by the matching room", () => {
   const files = [new File(["first"], "first.txt"), new File(["second"], "second.txt")];
@@ -31,4 +33,31 @@ test("zero-byte files use the shared known validation message", () => {
 test("an empty dropped directory is rejected before it can become a fake file", async () => {
   const directory = { name: "empty-folder", isFile: false, isDirectory: true, createReader: () => ({ readEntries: (resolve: (entries: FileSystemEntry[]) => void) => resolve([]) }) } as unknown as FileSystemDirectoryEntry;
   await assert.rejects(filesFromDropSnapshot({ files: [new File(["folder placeholder"], "empty-folder")], items: [{ entry: directory, file: null }] }), /This folder is empty\./);
+});
+
+test("every dropped file is represented optimistically before upload workers start", () => {
+  const files = [new File(["one"], "one.txt"), new File(["two"], "two.txt")];
+  let id = 0;
+  const queued = createQueuedUploads(files, () => `upload-${++id}`);
+
+  assert.deepEqual(queued.map(({ id, file, progress, status }) => ({ id, name: file.name, progress, status })), [
+    { id: "upload-1", name: "one.txt", progress: 0, status: "queued" },
+    { id: "upload-2", name: "two.txt", progress: 0, status: "queued" },
+  ]);
+});
+
+test("preparing route preserves File objects without persistent serialization", () => {
+  const file = new File(["private"], "private.txt");
+  preparePendingRoomCreation([file], 24);
+  assert.equal(getPendingRoomCreation()?.files[0], file);
+  clearPendingRoomCreation();
+});
+
+test("preparing route reuses one room creation promise across remounts", () => {
+  preparePendingRoomCreation([new File(["one"], "one.txt")], 24);
+  const first = startPendingRoomCreation();
+  const second = startPendingRoomCreation();
+  assert.equal(first, second);
+  void first?.catch(() => undefined);
+  clearPendingRoomCreation();
 });

@@ -5,13 +5,12 @@ import Link from "next/link";
 import { ArrowUpRight, Check, ChevronDown, FileUp, Moon, Sun } from "lucide-react";
 import { brand } from "@/src/config/brand";
 import { roomDurations, type RoomTtlHours } from "@/src/lib/duration";
-import { generateRoomKey, importRoomKey } from "@/src/lib/crypto/room-key";
-import { encryptJson } from "@/src/lib/crypto/payload";
 import { useTheme } from "@/src/components/theme-provider";
-import { trackEvent } from "@/src/lib/analytics";
 import { clearPendingRoomUpload, setPendingRoomUpload } from "@/src/lib/pending-room-upload";
 import { uploadBatchValidationError } from "@/src/lib/upload-validation";
 import { filesFromDropSnapshot, snapshotDrop, type DropSnapshot } from "@/src/lib/drop-files";
+import { createBlinkRoom } from "@/src/lib/create-room";
+import { preparePendingRoomCreation } from "@/src/lib/pending-room-creation";
 
 export function HomePage() {
   const router = useRouter();
@@ -24,12 +23,27 @@ export function HomePage() {
   const [feedback, setFeedback] = useState("");
   const creating = useRef(false);
   const validatingDrop = useRef(false);
+  const storageConfigRequest = useRef<Promise<{ maxFileSize: number }> | null>(null);
   const dragDepth = useRef(0);
   const splitRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   function showError(message: string) {
     setFeedback(message);
     setTimeout(() => setFeedback(""), 2400);
+  }
+  function getStorageConfig() {
+    if (!storageConfigRequest.current) {
+      storageConfigRequest.current = fetch("/api/storage-config", { cache: "no-store" })
+        .then((response) => {
+          if (!response.ok) throw new Error("Couldn’t prepare your upload.");
+          return response.json() as Promise<{ maxFileSize: number }>;
+        })
+        .catch((cause) => {
+          storageConfigRequest.current = null;
+          throw cause;
+        });
+    }
+    return storageConfigRequest.current;
   }
   async function createRoom(files: File[] = []) {
     if (creating.current) return;
@@ -39,21 +53,9 @@ export function HomePage() {
     setLifetimeOpen(false);
     clearPendingRoomUpload();
     try {
-      const roomKey = generateRoomKey();
-      const res = await fetch("/api/rooms", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ttlHours }),
-      });
-      if (!res.ok) throw new Error("Couldn’t create your room.");
-      const data = (await res.json()) as { slug: string };
-      const key = await importRoomKey(roomKey);
-      const encryptedVerifier = JSON.stringify(await encryptJson(key, { check: "blinkroom-room-key" }, `${data.slug}:verifier:v1`));
-      const verifier = await fetch(`/api/rooms/${data.slug}/verifier`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ encryptionVersion: 1, encryptedVerifier }) });
-      if (!verifier.ok) throw new Error("Couldn’t prepare your room.");
+      const data = await createBlinkRoom(ttlHours);
       if (files.length) setPendingRoomUpload(data.slug, files);
-      trackEvent("room_created", { room_mode: "standard", duration_bucket: ttlHours === 1 ? "1h" : ttlHours === 6 ? "6h" : ttlHours === 24 ? "24h" : "custom", auto_destroy_enabled: false }, `room:${data.slug}`);
-      router.push(`/r/${data.slug}#${roomKey}`);
+      router.push(`/r/${data.slug}#${data.roomKey}`);
       return;
     } catch (cause) {
       clearPendingRoomUpload();
@@ -72,12 +74,12 @@ export function HomePage() {
       // Empty files can be rejected synchronously, before config or room APIs.
       const basicError = uploadBatchValidationError(files, Number.POSITIVE_INFINITY);
       if (basicError) { showError(basicError); return; }
-      const response = await fetch("/api/storage-config", { cache: "no-store" });
-      if (!response.ok) throw new Error("Couldn’t prepare your upload.");
-      const config = await response.json() as { maxFileSize: number };
+      const config = await getStorageConfig();
       const validationError = uploadBatchValidationError(files, config.maxFileSize);
       if (validationError) { showError(validationError); return; }
-      await createRoom(files);
+      creating.current = true;
+      preparePendingRoomCreation(files, ttlHours);
+      router.push("/preparing-room");
     } catch (cause) {
       showError(cause instanceof Error ? cause.message : "Couldn’t prepare your upload.");
     } finally {
@@ -93,6 +95,10 @@ export function HomePage() {
       (index + direction + roomDurations.length) % roomDurations.length;
     optionRefs.current[next]?.focus();
   }
+  useEffect(() => {
+    router.prefetch("/preparing-room");
+    void getStorageConfig().catch(() => undefined);
+  }, [router]);
   useEffect(() => {
     const close = (event: PointerEvent) => {
       if (!splitRef.current?.contains(event.target as Node))
@@ -223,6 +229,13 @@ export function HomePage() {
       </section>
       <footer>
         <span>{brand.tagline}</span>
+        <nav className="home-seo-links" aria-label="Explore BlinkRoom">
+          <Link href="/encrypted-file-sharing">Encrypted</Link>
+          <Link href="/temporary-file-sharing">Temporary</Link>
+          <Link href="/send-files-without-signup">No signup</Link>
+          <Link href="/private-file-sharing">Private</Link>
+          <Link href="/secure-file-sharing">Secure sharing</Link>
+        </nav>
         <span>Private by default · Gone by design</span>
       </footer>
     </main>
