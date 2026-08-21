@@ -10,7 +10,8 @@ import { encryptJson } from "@/src/lib/crypto/payload";
 import { useTheme } from "@/src/components/theme-provider";
 import { trackEvent } from "@/src/lib/analytics";
 import { clearPendingRoomUpload, setPendingRoomUpload } from "@/src/lib/pending-room-upload";
-import { uploadValidationError } from "@/src/lib/upload-validation";
+import { uploadBatchValidationError } from "@/src/lib/upload-validation";
+import { filesFromDropSnapshot, snapshotDrop, type DropSnapshot } from "@/src/lib/drop-files";
 
 export function HomePage() {
   const router = useRouter();
@@ -22,9 +23,14 @@ export function HomePage() {
   const [instantPreparing, setInstantPreparing] = useState(false);
   const [feedback, setFeedback] = useState("");
   const creating = useRef(false);
+  const validatingDrop = useRef(false);
   const dragDepth = useRef(0);
   const splitRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  function showError(message: string) {
+    setFeedback(message);
+    setTimeout(() => setFeedback(""), 2400);
+  }
   async function createRoom(files: File[] = []) {
     if (creating.current) return;
     creating.current = true;
@@ -33,13 +39,6 @@ export function HomePage() {
     setLifetimeOpen(false);
     clearPendingRoomUpload();
     try {
-      if (files.length) {
-        const configResponse = await fetch("/api/storage-config", { cache: "no-store" });
-        if (!configResponse.ok) throw new Error("Couldn’t prepare your upload.");
-        const config = await configResponse.json() as { maxFileSize: number };
-        const invalid = files.find((file) => uploadValidationError(file, config.maxFileSize));
-        if (invalid) throw new Error(uploadValidationError(invalid, config.maxFileSize)!);
-      }
       const roomKey = generateRoomKey();
       const res = await fetch("/api/rooms", {
         method: "POST",
@@ -58,12 +57,32 @@ export function HomePage() {
       return;
     } catch (cause) {
       clearPendingRoomUpload();
-      setFeedback(cause instanceof Error ? cause.message : "Couldn’t create your room.");
-      setTimeout(() => setFeedback(""), 2400);
+      showError(cause instanceof Error ? cause.message : "Couldn’t create your room.");
     }
     creating.current = false;
     setLoading(false);
     setInstantPreparing(false);
+  }
+  async function createRoomFromDrop(snapshot: DropSnapshot) {
+    if (creating.current || validatingDrop.current) return;
+    validatingDrop.current = true;
+    try {
+      const files = await filesFromDropSnapshot(snapshot);
+      if (!files.length) throw new Error("Nothing to upload.");
+      // Empty files can be rejected synchronously, before config or room APIs.
+      const basicError = uploadBatchValidationError(files, Number.POSITIVE_INFINITY);
+      if (basicError) { showError(basicError); return; }
+      const response = await fetch("/api/storage-config", { cache: "no-store" });
+      if (!response.ok) throw new Error("Couldn’t prepare your upload.");
+      const config = await response.json() as { maxFileSize: number };
+      const validationError = uploadBatchValidationError(files, config.maxFileSize);
+      if (validationError) { showError(validationError); return; }
+      await createRoom(files);
+    } catch (cause) {
+      showError(cause instanceof Error ? cause.message : "Couldn’t prepare your upload.");
+    } finally {
+      validatingDrop.current = false;
+    }
   }
   function selectDuration(hours: RoomTtlHours) {
     setTtlHours(hours);
@@ -94,7 +113,7 @@ export function HomePage() {
     const enter = (event: DragEvent) => { if (!isFileDrag(event) || creating.current) return; event.preventDefault(); dragDepth.current += 1; setDragging(true); };
     const over = (event: DragEvent) => { if (isFileDrag(event)) event.preventDefault(); };
     const leave = (event: DragEvent) => { if (!isFileDrag(event) && !dragDepth.current) return; event.preventDefault(); dragDepth.current = event.relatedTarget ? Math.max(0, dragDepth.current - 1) : 0; if (!dragDepth.current) setDragging(false); };
-    const drop = (event: DragEvent) => { if (!isFileDrag(event)) return; event.preventDefault(); dragDepth.current = 0; setDragging(false); if (creating.current) return; const files = Array.from(event.dataTransfer?.files ?? []); if (files.length) void createRoom(files); };
+    const drop = (event: DragEvent) => { if (!isFileDrag(event)) return; event.preventDefault(); dragDepth.current = 0; setDragging(false); if (creating.current || validatingDrop.current || !event.dataTransfer) return; const snapshot = snapshotDrop(event.dataTransfer); if (snapshot.files.length || snapshot.items.length) void createRoomFromDrop(snapshot); };
     window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop);
     return () => { window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); };
   });

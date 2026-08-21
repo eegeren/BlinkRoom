@@ -57,6 +57,7 @@ import { fetchEncryptedFile } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
 import { takePendingRoomUpload } from "@/src/lib/pending-room-upload";
 import { uploadValidationError } from "@/src/lib/upload-validation";
+import { filesFromDropSnapshot, snapshotDrop } from "@/src/lib/drop-files";
 
 import {
   errorCategory,
@@ -132,209 +133,6 @@ const isSafeLink = (value: string) => {
 };
 
 const CLIENT_UPLOAD_CONCURRENCY = 6;
-
-type DroppedFile = {
-  path: string;
-  file: File;
-};
-
-type DropSnapshotItem = {
-  entry: FileSystemEntry | null;
-  file: File | null;
-};
-
-type DropSnapshot = {
-  files: File[];
-  items: DropSnapshotItem[];
-};
-
-function fileFromEntry(entry: FileSystemFileEntry): Promise<File> {
-  return new Promise((resolve, reject) => {
-    entry.file(resolve, reject);
-  });
-}
-
-function readDirectoryBatch(
-  reader: FileSystemDirectoryReader,
-): Promise<FileSystemEntry[]> {
-  return new Promise((resolve, reject) => {
-    reader.readEntries(resolve, reject);
-  });
-}
-
-async function readAllDirectoryEntries(
-  directory: FileSystemDirectoryEntry,
-): Promise<FileSystemEntry[]> {
-  const reader = directory.createReader();
-  const result: FileSystemEntry[] = [];
-
-  while (true) {
-    const batch = await readDirectoryBatch(reader);
-
-    if (!batch.length) {
-      break;
-    }
-
-    result.push(...batch);
-  }
-
-  return result;
-}
-
-async function walkDroppedEntry(
-  entry: FileSystemEntry,
-  parentPath = "",
-): Promise<DroppedFile[]> {
-  const path = parentPath
-    ? `${parentPath}/${entry.name}`
-    : entry.name;
-
-  if (entry.isFile) {
-    const file = await fileFromEntry(
-      entry as FileSystemFileEntry,
-    );
-
-    return [
-      {
-        path,
-        file,
-      },
-    ];
-  }
-
-  if (!entry.isDirectory) {
-    return [];
-  }
-
-  const children = await readAllDirectoryEntries(
-    entry as FileSystemDirectoryEntry,
-  );
-
-  const nested = await Promise.all(
-    children.map((child) =>
-      walkDroppedEntry(child, path),
-    ),
-  );
-
-  return nested.flat();
-}
-
-function safeArchiveName(name: string) {
-  const clean = name
-    .replace(/[\\/:*?"<>|]/g, "_")
-    .replace(/[\u0000-\u001f\u007f]/g, "_")
-    .trim();
-
-  return clean || "Folder";
-}
-
-async function droppedDirectoryToZip(
-  directory: FileSystemDirectoryEntry,
-): Promise<File> {
-  const droppedFiles = await walkDroppedEntry(directory);
-
-  if (!droppedFiles.length) {
-    throw new Error("This folder is empty.");
-  }
-
-  const { downloadZip } = await import("client-zip");
-
-  const rootPrefix = `${directory.name}/`;
-
-  const zipEntries = droppedFiles.map(
-    ({ path, file }) => ({
-      name: path.startsWith(rootPrefix)
-        ? path.slice(rootPrefix.length)
-        : path,
-      input: file,
-    }),
-  );
-
-  const zipBlob = await downloadZip(zipEntries).blob();
-
-  return new File(
-    [zipBlob],
-    `${safeArchiveName(directory.name)}.zip`,
-    {
-      type: "application/zip",
-      lastModified: Date.now(),
-    },
-  );
-}
-
-function snapshotDrop(
-  dataTransfer: DataTransfer,
-): DropSnapshot {
-  const files = Array.from(dataTransfer.files);
-
-  const items = Array.from(dataTransfer.items ?? [])
-    .filter((item) => item.kind === "file")
-    .map((item) => ({
-      entry: item.webkitGetAsEntry?.() ?? null,
-      file: item.getAsFile(),
-    }));
-
-  return {
-    files,
-    items,
-  };
-}
-
-async function filesFromDropSnapshot(
-  snapshot: DropSnapshot,
-): Promise<File[]> {
-  const { files, items } = snapshot;
-
-  if (!items.length) {
-    return files;
-  }
-
-  const hasDirectory = items.some(
-    (item) => item.entry?.isDirectory,
-  );
-
-  if (!hasDirectory) {
-    return files;
-  }
-
-  const output: File[] = [];
-
-  for (const item of items) {
-    const entry = item.entry;
-
-    if (!entry) {
-      if (item.file) {
-        output.push(item.file);
-      }
-
-      continue;
-    }
-
-    if (entry.isFile) {
-      if (item.file) {
-        output.push(item.file);
-      } else {
-        output.push(
-          await fileFromEntry(
-            entry as FileSystemFileEntry,
-          ),
-        );
-      }
-
-      continue;
-    }
-
-    if (entry.isDirectory) {
-      const zip = await droppedDirectoryToZip(
-        entry as FileSystemDirectoryEntry,
-      );
-
-      output.push(zip);
-    }
-  }
-
-  return output.length ? output : files;
-}
 
 async function fileFingerprint(file: File) {
   const sample = 1024 * 1024;
@@ -2928,6 +2726,7 @@ export function RoomClient({
             "Transfer cancelled";
 
         const friendly = [
+          "Empty files can’t be uploaded.",
           "This file is too large.",
           "This room has reached its temporary storage limit.",
           "This room has reached its item limit.",
