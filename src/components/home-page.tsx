@@ -2,13 +2,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { ArrowUpRight, Check, ChevronDown, Moon, Sun } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, FileUp, Moon, Sun } from "lucide-react";
 import { brand } from "@/src/config/brand";
 import { roomDurations, type RoomTtlHours } from "@/src/lib/duration";
 import { generateRoomKey, importRoomKey } from "@/src/lib/crypto/room-key";
 import { encryptJson } from "@/src/lib/crypto/payload";
 import { useTheme } from "@/src/components/theme-provider";
 import { trackEvent } from "@/src/lib/analytics";
+import { clearPendingRoomUpload, setPendingRoomUpload } from "@/src/lib/pending-room-upload";
+import { uploadValidationError } from "@/src/lib/upload-validation";
 
 export function HomePage() {
   const router = useRouter();
@@ -16,43 +18,52 @@ export function HomePage() {
   const [loading, setLoading] = useState(false);
   const [ttlHours, setTtlHours] = useState<RoomTtlHours>(24);
   const [lifetimeOpen, setLifetimeOpen] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [instantPreparing, setInstantPreparing] = useState(false);
+  const [feedback, setFeedback] = useState("");
   const creating = useRef(false);
+  const dragDepth = useRef(0);
   const splitRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  async function createRoom() {
+  async function createRoom(files: File[] = []) {
     if (creating.current) return;
     creating.current = true;
     setLoading(true);
+    setInstantPreparing(files.length > 0);
     setLifetimeOpen(false);
-    const roomKey = generateRoomKey();
-    const res = await fetch("/api/rooms", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ttlHours }),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { slug: string };
-      const key = await importRoomKey(roomKey);
-      const encryptedVerifier = JSON.stringify(
-        await encryptJson(
-          key,
-          { check: "blinkroom-room-key" },
-          `${data.slug}:verifier:v1`,
-        ),
-      );
-      const verifier = await fetch(`/api/rooms/${data.slug}/verifier`, {
+    clearPendingRoomUpload();
+    try {
+      if (files.length) {
+        const configResponse = await fetch("/api/storage-config", { cache: "no-store" });
+        if (!configResponse.ok) throw new Error("Couldn’t prepare your upload.");
+        const config = await configResponse.json() as { maxFileSize: number };
+        const invalid = files.find((file) => uploadValidationError(file, config.maxFileSize));
+        if (invalid) throw new Error(uploadValidationError(invalid, config.maxFileSize)!);
+      }
+      const roomKey = generateRoomKey();
+      const res = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ encryptionVersion: 1, encryptedVerifier }),
+        body: JSON.stringify({ ttlHours }),
       });
-      if (verifier.ok) {
-        trackEvent("room_created", { room_mode: "standard", duration_bucket: ttlHours === 1 ? "1h" : ttlHours === 6 ? "6h" : ttlHours === 24 ? "24h" : "custom", auto_destroy_enabled: false }, `room:${data.slug}`);
-        router.push(`/r/${data.slug}#${roomKey}`);
-        return;
-      }
+      if (!res.ok) throw new Error("Couldn’t create your room.");
+      const data = (await res.json()) as { slug: string };
+      const key = await importRoomKey(roomKey);
+      const encryptedVerifier = JSON.stringify(await encryptJson(key, { check: "blinkroom-room-key" }, `${data.slug}:verifier:v1`));
+      const verifier = await fetch(`/api/rooms/${data.slug}/verifier`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ encryptionVersion: 1, encryptedVerifier }) });
+      if (!verifier.ok) throw new Error("Couldn’t prepare your room.");
+      if (files.length) setPendingRoomUpload(data.slug, files);
+      trackEvent("room_created", { room_mode: "standard", duration_bucket: ttlHours === 1 ? "1h" : ttlHours === 6 ? "6h" : ttlHours === 24 ? "24h" : "custom", auto_destroy_enabled: false }, `room:${data.slug}`);
+      router.push(`/r/${data.slug}#${roomKey}`);
+      return;
+    } catch (cause) {
+      clearPendingRoomUpload();
+      setFeedback(cause instanceof Error ? cause.message : "Couldn’t create your room.");
+      setTimeout(() => setFeedback(""), 2400);
     }
     creating.current = false;
     setLoading(false);
+    setInstantPreparing(false);
   }
   function selectDuration(hours: RoomTtlHours) {
     setTtlHours(hours);
@@ -78,8 +89,19 @@ export function HomePage() {
       document.removeEventListener("keydown", escape);
     };
   }, []);
+  useEffect(() => {
+    const isFileDrag = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const enter = (event: DragEvent) => { if (!isFileDrag(event) || creating.current) return; event.preventDefault(); dragDepth.current += 1; setDragging(true); };
+    const over = (event: DragEvent) => { if (isFileDrag(event)) event.preventDefault(); };
+    const leave = (event: DragEvent) => { if (!isFileDrag(event) && !dragDepth.current) return; event.preventDefault(); dragDepth.current = event.relatedTarget ? Math.max(0, dragDepth.current - 1) : 0; if (!dragDepth.current) setDragging(false); };
+    const drop = (event: DragEvent) => { if (!isFileDrag(event)) return; event.preventDefault(); dragDepth.current = 0; setDragging(false); if (creating.current) return; const files = Array.from(event.dataTransfer?.files ?? []); if (files.length) void createRoom(files); };
+    window.addEventListener("dragenter", enter); window.addEventListener("dragover", over); window.addEventListener("dragleave", leave); window.addEventListener("drop", drop);
+    return () => { window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); };
+  });
   return (
     <main className="home">
+      {(dragging || instantPreparing) && <div className={`global-drop-overlay${instantPreparing ? " preparing" : ""}`} role="status" aria-live="polite"><FileUp /><h2>{instantPreparing ? "Preparing your room…" : "Drop it"}</h2>{!instantPreparing && <p>to share instantly</p>}</div>}
+      {feedback && <div className="feedback-toast"><span>{feedback}</span></div>}
       <nav className="landing-nav">
         <Link className="wordmark" href="/">
           {brand.name}
@@ -109,7 +131,7 @@ export function HomePage() {
         <div className="split-cta" ref={splitRef}>
           <button
             className="create-room-action"
-            onClick={createRoom}
+            onClick={() => void createRoom()}
             disabled={loading}
             aria-label="Create a room"
           >

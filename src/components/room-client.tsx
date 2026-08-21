@@ -55,6 +55,8 @@ import { WebRTCTransport } from "@/src/lib/transport/webrtc";
 import { selectTransport } from "@/src/lib/transport/selection";
 import { fetchEncryptedFile } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
+import { takePendingRoomUpload } from "@/src/lib/pending-room-upload";
+import { uploadValidationError } from "@/src/lib/upload-validation";
 
 import {
   errorCategory,
@@ -944,6 +946,7 @@ export function RoomClient({
 
   const [dragging, setDragging] =
     useState(false);
+  const [storageReady, setStorageReady] = useState(false);
 
   const [preview, setPreview] =
     useState<DecryptedItem | null>(null);
@@ -1301,9 +1304,10 @@ export function RoomClient({
         (config: StorageConfig) => {
           storageConfig.current =
             config;
+          setStorageReady(true);
         },
       )
-      .catch(() => undefined);
+      .catch(() => setStorageReady(true));
   }, []);
 
   useEffect(() => {
@@ -2064,16 +2068,10 @@ export function RoomClient({
       );
 
       try {
-        if (
-          storageConfig.current &&
-          file.size >
-            storageConfig.current
-              .maxFileSize
-        ) {
-          throw new Error(
-            "This file is too large.",
-          );
-        }
+        const validationError = storageConfig.current
+          ? uploadValidationError(file, storageConfig.current.maxFileSize)
+          : null;
+        if (validationError) throw new Error(validationError);
 
         const type:
           | "IMAGE"
@@ -3026,6 +3024,12 @@ export function RoomClient({
       uploadOne,
     ],
   );
+
+  useEffect(() => {
+    if (!cryptoKey || !storageReady || !identity.id || !room) return;
+    const files = takePendingRoomUpload(slug);
+    if (files.length) queueMicrotask(() => void uploadFiles(files));
+  }, [cryptoKey, identity.id, room, slug, storageReady, uploadFiles]);
 
   useEffect(() => {
     const resume = () => {
