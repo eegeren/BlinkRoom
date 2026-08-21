@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { HomePage } from "@/src/components/home-page";
+import { env, resolveStorageRuntimeConfig } from "@/src/lib/env";
 
 export const metadata: Metadata = { alternates: { canonical: "/" } };
 const schemas = [
@@ -9,4 +10,4 @@ const schemas = [
 ];
 const safeJsonLd = JSON.stringify(schemas).replace(/</g, "\\u003c");
 
-export default function Home() { return <><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd }} /><HomePage /></>; }
+export default function Home() { return <><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: safeJsonLd }} /><HomePage maxFileSize={resolveStorageRuntimeConfig(env).maxFileSize} /></>; }

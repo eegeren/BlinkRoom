@@ -13,10 +13,10 @@ export function getPendingRoomCreation() {
   pending = null;
   return null;
 }
-export function startPendingRoomCreation() {
+export function startPendingRoomCreation(create: typeof createBlinkRoom = createBlinkRoom) {
   const current = getPendingRoomCreation();
   if (!current) return null;
-  if (!current.creationPromise) current.creationPromise = createBlinkRoom(current.ttlHours);
+  if (!current.creationPromise) current.creationPromise = create(current.ttlHours);
   return current.creationPromise;
 }
 export function retryPendingRoomCreation() {

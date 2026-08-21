@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clearPendingRoomUpload, setPendingRoomUpload, takePendingRoomUpload } from "../src/lib/pending-room-upload";
+import { clearPendingRoomUpload, peekPendingRoomUpload, setPendingRoomUpload, takePendingRoomUpload } from "../src/lib/pending-room-upload";
 import { uploadBatchValidationError, uploadValidationError } from "../src/lib/upload-validation";
 import { filesFromDropSnapshot } from "../src/lib/drop-files";
 import { createQueuedUploads } from "../src/lib/upload-queue";
@@ -9,6 +9,8 @@ import { clearPendingRoomCreation, getPendingRoomCreation, preparePendingRoomCre
 test("instant-drop files remain in memory and are consumed exactly once by the matching room", () => {
   const files = [new File(["first"], "first.txt"), new File(["second"], "second.txt")];
   setPendingRoomUpload("ROOM-1", files);
+  assert.equal(peekPendingRoomUpload("ROOM-1")[0], files[0]);
+  assert.equal(peekPendingRoomUpload("ROOM-1").length, 2);
   assert.equal(takePendingRoomUpload("ROOM-1").length, 2);
   assert.deepEqual(takePendingRoomUpload("ROOM-1"), []);
 });
@@ -46,18 +48,28 @@ test("every dropped file is represented optimistically before upload workers sta
   ]);
 });
 
-test("preparing route preserves File objects without persistent serialization", () => {
+test("instant shell preserves File objects without persistent serialization", () => {
   const file = new File(["private"], "private.txt");
   preparePendingRoomCreation([file], 24);
   assert.equal(getPendingRoomCreation()?.files[0], file);
   clearPendingRoomCreation();
 });
 
-test("preparing route reuses one room creation promise across remounts", () => {
-  preparePendingRoomCreation([new File(["one"], "one.txt")], 24);
-  const first = startPendingRoomCreation();
-  const second = startPendingRoomCreation();
+test("instant shell starts a delayed room request eagerly and never duplicates it", async () => {
+  const file = new File(["one"], "one.txt");
+  let calls = 0;
+  let resolveRoom!: (room: { slug: string; roomKey: string }) => void;
+  const create = async () => {
+    calls += 1;
+    return new Promise<{ slug: string; roomKey: string }>((resolve) => { resolveRoom = resolve; });
+  };
+  preparePendingRoomCreation([file], 24);
+  const first = startPendingRoomCreation(create);
+  const second = startPendingRoomCreation(create);
   assert.equal(first, second);
-  void first?.catch(() => undefined);
+  assert.equal(calls, 1);
+  assert.equal(getPendingRoomCreation()?.files[0], file);
+  resolveRoom({ slug: "ROOM-1", roomKey: "key" });
+  assert.deepEqual(await first, { slug: "ROOM-1", roomKey: "key" });
   clearPendingRoomCreation();
 });

@@ -55,10 +55,12 @@ import { WebRTCTransport } from "@/src/lib/transport/webrtc";
 import { selectTransport } from "@/src/lib/transport/selection";
 import { fetchEncryptedFile } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
-import { takePendingRoomUpload } from "@/src/lib/pending-room-upload";
+import { peekPendingRoomUpload, takePendingRoomUpload } from "@/src/lib/pending-room-upload";
 import { uploadValidationError } from "@/src/lib/upload-validation";
 import { filesFromDropSnapshot, snapshotDrop } from "@/src/lib/drop-files";
 import { createQueuedUploads } from "@/src/lib/upload-queue";
+import { markInstantDropTiming } from "@/src/lib/instant-drop-timing";
+import { PreparingRoomShell } from "@/src/components/preparing-room-shell";
 
 import {
   errorCategory,
@@ -747,6 +749,8 @@ export function RoomClient({
   const [dragging, setDragging] =
     useState(false);
   const [storageReady, setStorageReady] = useState(false);
+  const [instantPendingFiles] = useState(() => peekPendingRoomUpload(slug));
+  const [instantHandoffStarted, setInstantHandoffStarted] = useState(false);
 
   const [preview, setPreview] =
     useState<DecryptedItem | null>(null);
@@ -1174,6 +1178,7 @@ export function RoomClient({
                     direction ===
                     "sending"
                   ) {
+                    if (progress > 0) markInstantDropTiming("first_upload_progress");
                     setUploads(
                       (current) =>
                         current.map(
@@ -1261,6 +1266,7 @@ export function RoomClient({
                         direction ===
                         "sending"
                       ) {
+                        if (progress > 0) markInstantDropTiming("first_upload_progress");
                         setUploads(
                           (
                             current,
@@ -2088,6 +2094,7 @@ export function RoomClient({
             onUpload: (
               progress,
             ) => {
+              if (progress > 0) markInstantDropTiming("first_upload_progress");
               setUploads(
                 (current) =>
                   current.map(
@@ -2366,6 +2373,7 @@ export function RoomClient({
             onProgress: (
               progress,
             ) => {
+              if (progress > 0) markInstantDropTiming("first_upload_progress");
               setUploads(
                 (current) =>
                   current.map(
@@ -2489,6 +2497,7 @@ export function RoomClient({
               if (
                 event.lengthComputable
               ) {
+                if (event.loaded > 0) markInstantDropTiming("first_upload_progress");
                 setUploads(
                   (current) =>
                     current.map(
@@ -2833,7 +2842,13 @@ export function RoomClient({
   useEffect(() => {
     if (!cryptoKey || !storageReady || !identity.id || !room) return;
     const files = takePendingRoomUpload(slug);
-    if (files.length) queueMicrotask(() => void uploadFiles(files));
+    if (files.length) {
+      markInstantDropTiming("upload_init_started");
+      queueMicrotask(() => {
+        setInstantHandoffStarted(true);
+        void uploadFiles(files);
+      });
+    }
   }, [cryptoKey, identity.id, room, slug, storageReady, uploadFiles]);
 
   useEffect(() => {
@@ -3028,6 +3043,7 @@ export function RoomClient({
   }
 
   if (!room) {
+    if (instantPendingFiles.length) return <PreparingRoomShell files={instantPendingFiles} error={false} onRetry={() => undefined} onBack={() => undefined} />;
     return (
       <div className="room-loading">
         <span className="wordmark">
@@ -3038,6 +3054,10 @@ export function RoomClient({
         <div className="loader" />
       </div>
     );
+  }
+
+  if (instantPendingFiles.length && !instantHandoffStarted) {
+    return <PreparingRoomShell files={instantPendingFiles} error={false} onRetry={() => undefined} onBack={() => undefined} />;
   }
 
   const left = Math.max(

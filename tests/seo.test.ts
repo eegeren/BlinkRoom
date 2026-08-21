@@ -14,12 +14,13 @@ const pages = [
   ["/send-files-without-signup", "Send Files Without Signup", "No registration required."],
   ["/private-file-sharing", "Private File Sharing", "Privacy boundaries explained."],
   ["/secure-file-sharing", "Secure File Sharing", "Secure sharing through temporary rooms."],
+  ["/how-to-use", "How to Use BlinkRoom", "Create, upload and share with BlinkRoom."],
 ] as const;
 
 test("SEO landing metadata has unique titles, descriptions and self canonicals", () => {
   const metadata = pages.map(([path, title, description]) => seoMetadata(path, title, description));
-  assert.equal(new Set(metadata.map((item) => item.title)).size, 5);
-  assert.equal(new Set(metadata.map((item) => item.description)).size, 5);
+  assert.equal(new Set(metadata.map((item) => item.title)).size, pages.length);
+  assert.equal(new Set(metadata.map((item) => item.description)).size, pages.length);
   metadata.forEach((item, index) => assert.equal(item.alternates?.canonical, pages[index][0]));
 });
 

@@ -8,6 +8,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ["/send-files-without-signup", 0.9],
     ["/private-file-sharing", 0.8],
     ["/secure-file-sharing", 0.8],
+    ["/how-to-use", 0.9],
   ] as const;
   return pages.map(([path, priority]) => ({ url: `https://blinkroom.org${path}`, changeFrequency: "weekly" as const, priority }));
 }

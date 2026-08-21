@@ -16,4 +16,9 @@ export function takePendingRoomUpload(slug: string) {
   return current.files;
 }
 
+export function peekPendingRoomUpload(slug: string) {
+  if (!pending || pending.slug !== slug || Date.now() - pending.createdAt > 5 * 60_000) return [];
+  return pending.files;
+}
+
 export function clearPendingRoomUpload() { pending = null; }
