@@ -2924,7 +2924,10 @@ export function RoomClient({
         return;
       }
 
-      setUploads((current) => [...current, ...queue]);
+      // Workers consume `queue` with shift(). Keep the optimistic rows on an
+      // immutable snapshot so React cannot observe an already-drained array.
+      const queuedForRender = [...queue];
+      setUploads((current) => [...current, ...queuedForRender]);
 
       const workerCount =
         Math.min(

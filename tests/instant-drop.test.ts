@@ -48,6 +48,22 @@ test("every dropped file is represented optimistically before upload workers sta
   ]);
 });
 
+test("draining the worker queue does not drain the optimistic upload rows", () => {
+  const queue = createQueuedUploads([
+    new File(["one"], "one.txt"),
+    new File(["two"], "two.txt"),
+  ]);
+  const queuedForRender = [...queue];
+
+  while (queue.length) queue.shift();
+
+  assert.equal(queue.length, 0);
+  assert.deepEqual(
+    queuedForRender.map((upload) => upload.file.name),
+    ["one.txt", "two.txt"],
+  );
+});
+
 test("instant shell preserves File objects without persistent serialization", () => {
   const file = new File(["private"], "private.txt");
   preparePendingRoomCreation([file], 24);
