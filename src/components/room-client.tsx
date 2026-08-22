@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { io } from "socket.io-client";
 import {
@@ -756,6 +757,18 @@ export function RoomClient({
     useState<DecryptedItem | null>(null);
 
   const [now, setNow] = useState(0);
+
+  useEffect(() => {
+    if (!menu || !window.matchMedia("(max-width: 720px)").matches) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(false); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menu]);
 
   const fileRef =
     useRef<HTMLInputElement>(null);
@@ -4055,6 +4068,7 @@ export function RoomClient({
 
           <button
             className="mobile-menu"
+            aria-label="Invite people"
             onClick={() =>
               setInvite(true)
             }
@@ -4065,6 +4079,9 @@ export function RoomClient({
           {isOwner && (
             <button
               className="mobile-more"
+              aria-label="Room options"
+              aria-haspopup="dialog"
+              aria-expanded={menu}
               onClick={() =>
                 setMenu(!menu)
               }
@@ -4075,8 +4092,19 @@ export function RoomClient({
 
           {menu &&
             isOwner && (
-              <div className="mobile-room-menu">
-                <button
+              createPortal(
+              <div className="mobile-room-menu-backdrop" onMouseDown={() => setMenu(false)}>
+              <section className="mobile-room-menu" role="dialog" aria-modal="true" aria-labelledby="mobile-room-options-title" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="mobile-room-menu-handle" />
+                <header><h2 id="mobile-room-options-title">Room options</h2><button onClick={() => setMenu(false)} aria-label="Close room options"><X /></button></header>
+                <button className="mobile-setting-option" onClick={() => updateSetting("autoDestroyWhenEmpty", !room.autoDestroyWhenEmpty)}>
+                  <span><strong>Destroy when everyone leaves</strong><small>The room disappears after the last participant leaves.</small></span><b>{room.autoDestroyWhenEmpty ? "On" : "Off"}</b>
+                </button>
+                <button className="mobile-setting-option" onClick={() => updateSetting("directOnly", !room.directOnly)}>
+                  <span><strong>Direct transfers only</strong><small>Files are never stored temporarily.</small></span><b>{room.directOnly ? "On" : "Off"}</b>
+                </button>
+                <div className="mobile-room-menu-divider" />
+                <button className="mobile-destroy-room"
                   onClick={() => {
                     setDestroy(
                       true,
@@ -4090,7 +4118,10 @@ export function RoomClient({
                   <Trash2 />
                   Destroy room
                 </button>
-              </div>
+              </section>
+              </div>,
+              document.body,
+              )
             )}
         </div>
 
