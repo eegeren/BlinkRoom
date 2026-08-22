@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   const token = ownerToken(); let slug = roomSlug();
   while (await db.room.findUnique({ where: { slug }, select: { id: true } })) slug = roomSlug();
   const createdAt = new Date();
-  const room = await db.room.create({ data: { slug, createdAt, ownerTokenHash: tokenHash(token), expiresAt: new Date(createdAt.getTime() + input.data.ttlHours * 3_600_000) } });
+  const room = await db.room.create({ data: { slug, cryptoContext: slug, createdAt, ownerTokenHash: tokenHash(token), expiresAt: new Date(createdAt.getTime() + input.data.ttlHours * 3_600_000) } });
   await trackMetric("ROOM_CREATED");
   const res = NextResponse.json({ slug: room.slug });
   res.cookies.set(`blinkroom_owner_${slug}`, token, { httpOnly: true, sameSite: "strict", secure: process.env.NODE_ENV === "production", path: `/`, expires: room.expiresAt });

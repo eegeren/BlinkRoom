@@ -5,6 +5,7 @@ import { db } from "@/src/lib/db";
 import { canRelaySignal } from "./signaling-policy";
 import { env } from "@/src/lib/env";
 import { cleanupRoomStorage } from "./storage/cleanup";
+import { tokenHash } from "@/src/lib/security";
 
 type Presence = Map<string, { name: string; sockets: Set<string> }>;
 const rooms = new Map<string, Presence>();
@@ -40,6 +41,13 @@ function snapshot(slug: string) {
     name: v.name,
   }));
 }
+function cookieValue(raw: string | undefined, name: string) {
+  for (const part of raw?.split(";") ?? []) {
+    const [key, ...value] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
 export function registerRealtime(io: Server) {
   realtimeGlobal.blinkRoomIo = io;
   io.on("connection", (socket) => {
@@ -48,7 +56,6 @@ export function registerRealtime(io: Server) {
       async ({
         slug,
         participantId,
-        name,
       }: {
         slug: string;
         participantId: string;
@@ -62,13 +69,15 @@ export function registerRealtime(io: Server) {
           return;
         const active = await db.room.findUnique({
           where: { slug },
-          select: { id: true, status: true, expiresAt: true },
+          select: { id: true, ownerTokenHash: true, status: true, expiresAt: true },
         });
         if (
           !active ||
           !canRelaySignal(slug, slug, active.status, active.expiresAt)
         )
           return;
+        const ownerCookie = cookieValue(socket.handshake.headers.cookie, `blinkroom_owner_${slug}`);
+        const isOwner = Boolean(ownerCookie && tokenHash(ownerCookie) === active.ownerTokenHash);
         await db.$transaction([
           db.roomPresence.upsert({
             where: { socketId: socket.id },
@@ -76,6 +85,7 @@ export function registerRealtime(io: Server) {
               socketId: socket.id,
               roomId: active.id,
               participantId,
+              isOwner,
               expiresAt: new Date(
                 Date.now() + env.PRESENCE_LEASE_SECONDS * 1000,
               ),
@@ -83,6 +93,7 @@ export function registerRealtime(io: Server) {
             update: {
               roomId: active.id,
               participantId,
+              isOwner,
               expiresAt: new Date(
                 Date.now() + env.PRESENCE_LEASE_SECONDS * 1000,
               ),
@@ -98,13 +109,13 @@ export function registerRealtime(io: Server) {
         let assignedName = registry.get(participantId);
         if (!assignedName) {
           assignedName =
-            name === "Room owner"
+            isOwner
               ? "Room owner"
               : `Guest ${[...registry.values()].filter((v) => v.startsWith("Guest ")).length + 1}`;
           registry.set(participantId, assignedName);
         }
         socket.join(slug);
-        socket.data = { slug, participantId, name: assignedName };
+        socket.data = { slug, participantId, name: assignedName, isOwner };
         const presence = rooms.get(slug) ?? new Map();
         rooms.set(slug, presence);
         const existing = presence.get(participantId);
@@ -281,6 +292,34 @@ async function handleReliableEmpty(slug: string, socketId: string) {
       void cleanupRoomStorage(room.id, slug).catch(() => undefined);
     }
   }, env.AUTO_DESTROY_GRACE_SECONDS * 1000);
+}
+export async function rotateRealtimeAccess(oldSlug: string, newSlug: string) {
+  const io = realtimeGlobal.blinkRoomIo;
+  if (!io) return;
+  const sockets = await io.in(oldSlug).fetchSockets();
+  const ownerPresence: Presence = new Map();
+  for (const socket of sockets) {
+    const data = socket.data as { participantId?: string; name?: string; isOwner?: boolean; slug?: string };
+    if (data.isOwner && data.participantId) {
+      await socket.leave(oldSlug);
+      await socket.join(newSlug);
+      data.slug = newSlug;
+      const current = ownerPresence.get(data.participantId);
+      if (current) current.sockets.add(socket.id);
+      else ownerPresence.set(data.participantId, { name: data.name ?? "Room owner", sockets: new Set([socket.id]) });
+      setTimeout(() => socket.emit("room:rotated", { slug: newSlug }), 300);
+    } else {
+      socket.emit("room:access-revoked");
+      setTimeout(() => socket.disconnect(true), 50);
+    }
+  }
+  rooms.delete(oldSlug);
+  names.delete(oldSlug);
+  if (ownerPresence.size) {
+    rooms.set(newSlug, ownerPresence);
+    names.set(newSlug, new Map([...ownerPresence].map(([id, value]) => [id, value.name])));
+    io.to(newSlug).emit("presence:update", snapshot(newSlug));
+  }
 }
 export const roomChannel = {
   itemCreated: (slug: string, item: unknown) =>

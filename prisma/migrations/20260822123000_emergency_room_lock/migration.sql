@@ -1,0 +1,6 @@
+ALTER TABLE "Room" ADD COLUMN "cryptoContext" TEXT;
+UPDATE "Room" SET "cryptoContext" = "slug";
+ALTER TABLE "Room" ALTER COLUMN "cryptoContext" SET NOT NULL;
+ALTER TABLE "Room" ADD COLUMN "accessVersion" INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE "RoomPresence" ADD COLUMN "isOwner" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "UploadSession" ADD COLUMN "accessVersion" INTEGER NOT NULL DEFAULT 1;

@@ -31,7 +31,7 @@ export async function POST(
     return NextResponse.json({ error: "Invalid upload part" }, { status: 400 });
   const session = await db.uploadSession.findFirst({
     where: { id: sessionId, room: { slug }, status: "UPLOADING" },
-    include: { room: { select: { status: true, expiresAt: true } } },
+    include: { room: { select: { status: true, expiresAt: true, accessVersion: true } } },
   });
   if (
     !session ||
@@ -40,6 +40,7 @@ export async function POST(
   )
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
+    session.accessVersion !== session.room.accessVersion ||
     session.room.status !== "ACTIVE" ||
     session.room.expiresAt <= new Date() ||
     !session.multipartUploadId
@@ -71,7 +72,7 @@ export async function PATCH(
   const session = await db.uploadSession.findFirst({
     where: { id: sessionId, room: { slug }, status: "UPLOADING" },
     include: {
-      room: { select: { status: true, expiresAt: true, directOnly: true } },
+      room: { select: { status: true, expiresAt: true, directOnly: true, accessVersion: true } },
     },
   });
   if (
@@ -81,6 +82,7 @@ export async function PATCH(
   )
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
+    session.accessVersion !== session.room.accessVersion ||
     session.room.directOnly ||
     session.room.status !== "ACTIVE" ||
     session.room.expiresAt <= new Date() ||

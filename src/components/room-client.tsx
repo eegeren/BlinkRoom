@@ -423,6 +423,7 @@ async function uploadMultipartStorage(input: {
 
 async function uploadStreamingStorage(input: {
   slug: string;
+  cryptoContext: string;
   itemId: string;
   senderId: string;
   type: "IMAGE" | "FILE";
@@ -516,7 +517,7 @@ async function uploadStreamingStorage(input: {
   for await (const body of encryptFileMultipart(
     input.key,
     input.file,
-    input.slug,
+    input.cryptoContext,
     input.itemId,
     session.partSize,
     input.onEncrypt,
@@ -695,6 +696,7 @@ export function RoomClient({
 }) {
   const [room, setRoom] =
     useState<PublicRoom | null>(null);
+  const cryptoContextRef = useRef(slug);
 
   const [items, setItems] = useState<
     DecryptedItem[]
@@ -730,15 +732,21 @@ export function RoomClient({
 
   const [invite, setInvite] = useState(false);
   const [destroy, setDestroy] = useState(false);
+  const [emergencyLock, setEmergencyLock] = useState(false);
+  const [lockingRoom, setLockingRoom] = useState(false);
   const [sheet, setSheet] = useState(false);
+  const [sheetClosing, setSheetClosing] = useState(false);
   const [oneTimeNext, setOneTimeNext] =
     useState(false);
 
   const [menu, setMenu] = useState(false);
+  const [menuClosing, setMenuClosing] = useState(false);
   const [lifetime, setLifetime] =
     useState(false);
+  const [lifetimeClosing, setLifetimeClosing] = useState(false);
 
   const [feedback, setFeedback] = useState("");
+  const securityFeedbackRef = useRef(false);
   const [downloadingAll, setDownloadingAll] =
     useState(false);
 
@@ -757,18 +765,97 @@ export function RoomClient({
     useState<DecryptedItem | null>(null);
 
   const [now, setNow] = useState(0);
+  const menuCloseTimer = useRef<number | null>(null);
+  const sheetCloseTimer = useRef<number | null>(null);
+  const lifetimeCloseTimer = useRef<number | null>(null);
+
+  const closeMenu = useCallback(() => {
+    if (!menu || menuClosing) return;
+    setMenuClosing(true);
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+    menuCloseTimer.current = window.setTimeout(() => {
+      setMenu(false);
+      setMenuClosing(false);
+    }, delay);
+  }, [menu, menuClosing]);
+
+  const closeSheet = useCallback(() => {
+    if (!sheet || sheetClosing) return;
+    setSheetClosing(true);
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+    sheetCloseTimer.current = window.setTimeout(() => {
+      setSheet(false);
+      setSheetClosing(false);
+    }, delay);
+  }, [sheet, sheetClosing]);
+
+  const closeLifetime = useCallback(() => {
+    if (!lifetime || lifetimeClosing) return;
+    setLifetimeClosing(true);
+    const delay = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 140;
+    lifetimeCloseTimer.current = window.setTimeout(() => {
+      setLifetime(false);
+      setLifetimeClosing(false);
+    }, delay);
+  }, [lifetime, lifetimeClosing]);
+
+  useEffect(() => {
+    const secured = sessionStorage.getItem("blinkroom_room_secured");
+    if (secured !== slug) return;
+    securityFeedbackRef.current = true;
+    const showTimer = window.setTimeout(
+      () => setFeedback("Room secured — a new room code was generated and previous access was revoked."),
+      0,
+    );
+    const hideTimer = window.setTimeout(() => {
+      if (sessionStorage.getItem("blinkroom_room_secured") === slug)
+        sessionStorage.removeItem("blinkroom_room_secured");
+      securityFeedbackRef.current = false;
+      setFeedback("");
+    }, 3200);
+    return () => {
+      window.clearTimeout(showTimer);
+      window.clearTimeout(hideTimer);
+    };
+  }, [slug]);
 
   useEffect(() => {
     if (!menu || !window.matchMedia("(max-width: 720px)").matches) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenu(false); };
-    document.addEventListener("keydown", closeOnEscape);
     return () => {
       document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", closeOnEscape);
     };
   }, [menu]);
+
+  useEffect(() => {
+    if (!menu && !sheet && !lifetime) return;
+    const dismissOnPointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      if (menu && !target.closest('[data-room-popup="menu"]')) closeMenu();
+      if (sheet && !target.closest('[data-room-popup="sheet"]')) closeSheet();
+      if (lifetime && !target.closest('[data-room-popup="lifetime"]')) closeLifetime();
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      closeMenu();
+      closeSheet();
+      closeLifetime();
+    };
+    document.addEventListener("pointerdown", dismissOnPointerDown, true);
+    document.addEventListener("keydown", dismissOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", dismissOnPointerDown, true);
+      document.removeEventListener("keydown", dismissOnEscape);
+    };
+  }, [closeLifetime, closeMenu, closeSheet, lifetime, menu, sheet]);
+
+  useEffect(() => () => {
+    if (menuCloseTimer.current !== null) window.clearTimeout(menuCloseTimer.current);
+    if (sheetCloseTimer.current !== null) window.clearTimeout(sheetCloseTimer.current);
+    if (lifetimeCloseTimer.current !== null) window.clearTimeout(lifetimeCloseTimer.current);
+  }, []);
 
   const fileRef =
     useRef<HTMLInputElement>(null);
@@ -898,7 +985,7 @@ export function RoomClient({
             parseEnvelope(
               item.encryptedPayload,
             ),
-            `${slug}:${item.id}:content:v1`,
+            `${cryptoContextRef.current}:${item.id}:content:v1`,
           );
 
         if (
@@ -933,7 +1020,7 @@ export function RoomClient({
           parseEnvelope(
             item.encryptedMetadata,
           ),
-          `${slug}:${item.id}:metadata:v1`,
+          `${cryptoContextRef.current}:${item.id}:metadata:v1`,
         );
 
       if (
@@ -979,7 +1066,7 @@ export function RoomClient({
           await decryptFileChunks(
             key,
             encrypted,
-            slug,
+            cryptoContextRef.current,
             item.id,
             secret.mimeType,
           );
@@ -1046,7 +1133,7 @@ export function RoomClient({
             parseEnvelope(
               data.encryptedVerifier,
             ),
-            `${slug}:verifier:v1`,
+            `${data.cryptoContext}:verifier:v1`,
           );
 
         if (
@@ -1058,6 +1145,7 @@ export function RoomClient({
           );
         }
 
+        cryptoContextRef.current = data.cryptoContext;
         const decrypted =
           await Promise.all(
             data.items.map((item) =>
@@ -1324,12 +1412,10 @@ export function RoomClient({
 
     socket.on("connect", () => {
       setStatus("connected");
-      setFeedback("Connected");
-
-      setTimeout(
-        () => setFeedback(""),
-        1200,
-      );
+      if (!securityFeedbackRef.current) {
+        setFeedback("Connected");
+        setTimeout(() => setFeedback(""), 1200);
+      }
 
       socket.emit("room:join", {
         slug,
@@ -1532,6 +1618,20 @@ export function RoomClient({
         setError("expired");
       },
     );
+
+    socket.on("room:access-revoked", () => {
+      clearSecrets();
+      transportRef.current?.close();
+      transportRef.current = null;
+      socket.disconnect();
+      setError("access-changed");
+    });
+
+    socket.on("room:rotated", ({ slug: nextSlug }: { slug: string }) => {
+      if (!isOwner || !/^[A-Z0-9-]{4,16}$/.test(nextSlug)) return;
+      sessionStorage.setItem("blinkroom_room_secured", nextSlug);
+      window.setTimeout(() => window.location.replace(`/r/${nextSlug}${window.location.hash}`), 450);
+    });
 
     socket.on(
       "room:expiration-updated",
@@ -1750,7 +1850,7 @@ export function RoomClient({
               content,
               senderName,
             },
-            `${slug}:${itemId}:content:v1`,
+            `${cryptoContextRef.current}:${itemId}:content:v1`,
           ),
         );
 
@@ -1920,7 +2020,7 @@ export function RoomClient({
 
                 senderName,
               },
-              `${slug}:${id}:metadata:v1`,
+              `${cryptoContextRef.current}:${id}:metadata:v1`,
             ),
           );
 
@@ -2065,6 +2165,7 @@ export function RoomClient({
         ) {
           await uploadStreamingStorage({
             slug,
+            cryptoContext: cryptoContextRef.current,
             itemId: id,
             senderId: identity.id,
             type,
@@ -2165,7 +2266,7 @@ export function RoomClient({
           await encryptFileChunks(
             key,
             file,
-            slug,
+            cryptoContextRef.current,
             id,
             (progress) => {
               setUploads(
@@ -3205,7 +3306,7 @@ export function RoomClient({
         await decryptFileChunks(
           key,
           encrypted,
-          slug,
+          cryptoContextRef.current,
           item.id,
           item.mimeType,
         );
@@ -3403,7 +3504,7 @@ export function RoomClient({
           await decryptFileChunks(
             key,
             encrypted,
-            slug,
+            cryptoContextRef.current,
             item.id,
             item.mimeType!,
           );
@@ -3573,6 +3674,22 @@ export function RoomClient({
       clearSecrets();
       setError("destroyed");
     }
+  }
+
+  async function lockRoomAccess() {
+    if (lockingRoom) return;
+    setLockingRoom(true);
+    const res = await fetch(`/api/rooms/${slug}/rotate`, { method: "POST" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      setFeedback(data?.error ?? "Unable to secure this room.");
+      setTimeout(() => setFeedback(""), 2400);
+      setLockingRoom(false);
+      return;
+    }
+    const data = await res.json() as { slug: string };
+    sessionStorage.setItem("blinkroom_room_secured", data.slug);
+    window.location.replace(`/r/${data.slug}${window.location.hash}`);
   }
 
   async function updateLifetime(
@@ -3868,9 +3985,7 @@ export function RoomClient({
 
           <button
             className="presence-count"
-            onClick={() =>
-              setMenu(false)
-            }
+            onClick={closeMenu}
           >
             <i />
             {participants.length}{" "}
@@ -3885,7 +4000,7 @@ export function RoomClient({
             End-to-end encrypted
           </div>
 
-          <div className="lifetime-wrap">
+          <div className="lifetime-wrap" data-room-popup="lifetime">
             {isOwner ? (
               <button
                 className={`room-timer owner ${
@@ -3897,11 +4012,13 @@ export function RoomClient({
                     ? "urgent"
                     : ""
                 }`}
-                onClick={() =>
-                  setLifetime(
-                    !lifetime,
-                  )
-                }
+                onClick={() => {
+                  if (lifetime) closeLifetime();
+                  else {
+                    setLifetimeClosing(false);
+                    setLifetime(true);
+                  }
+                }}
               >
                 {timerLabel}
               </button>
@@ -3923,7 +4040,7 @@ export function RoomClient({
 
             {lifetime &&
               isOwner && (
-                <div className="lifetime-popover">
+                <div className={`lifetime-popover${lifetimeClosing ? " popup-closing" : ""}`}>
                   <strong>
                     Room lifetime
                   </strong>
@@ -3970,19 +4087,23 @@ export function RoomClient({
               Invite
             </button>
 
-            <div className="more-wrap">
+            <div className="more-wrap" data-room-popup="menu">
               <button
                 className="more-button"
-                onClick={() =>
-                  setMenu(!menu)
-                }
+                onClick={() => {
+                  if (menu) closeMenu();
+                  else {
+                    setMenuClosing(false);
+                    setMenu(true);
+                  }
+                }}
                 aria-label="Room menu"
               >
                 <MoreHorizontal />
               </button>
 
               {menu && (
-                <div className="room-menu">
+                <div className={`room-menu${menuClosing ? " popup-closing" : ""}`}>
                   {isOwner ? (
                     <>
                       <button
@@ -4042,6 +4163,14 @@ export function RoomClient({
                       </button>
 
                       <button
+                        className="emergency-lock-option"
+                        onClick={() => { setEmergencyLock(true); setMenu(false); }}
+                      >
+                        <LockKeyhole />
+                        <span>Emergency lock<small>Change the room code and remove existing access.</small></span>
+                      </button>
+
+                      <button
                         onClick={() => {
                           setDestroy(
                             true,
@@ -4082,9 +4211,14 @@ export function RoomClient({
               aria-label="Room options"
               aria-haspopup="dialog"
               aria-expanded={menu}
-              onClick={() =>
-                setMenu(!menu)
-              }
+              data-room-popup="menu"
+              onClick={() => {
+                if (menu) closeMenu();
+                else {
+                  setMenuClosing(false);
+                  setMenu(true);
+                }
+              }}
             >
               <MoreHorizontal />
             </button>
@@ -4093,15 +4227,18 @@ export function RoomClient({
           {menu &&
             isOwner && (
               createPortal(
-              <div className="mobile-room-menu-backdrop" onMouseDown={() => setMenu(false)}>
-              <section className="mobile-room-menu" role="dialog" aria-modal="true" aria-labelledby="mobile-room-options-title" onMouseDown={(event) => event.stopPropagation()}>
+              <div className={`mobile-room-menu-backdrop${menuClosing ? " popup-closing" : ""}`} onMouseDown={closeMenu}>
+              <section data-room-popup="menu" className="mobile-room-menu" role="dialog" aria-modal="true" aria-labelledby="mobile-room-options-title" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="mobile-room-menu-handle" />
-                <header><h2 id="mobile-room-options-title">Room options</h2><button onClick={() => setMenu(false)} aria-label="Close room options"><X /></button></header>
+                <header><h2 id="mobile-room-options-title">Room options</h2><button onClick={closeMenu} aria-label="Close room options"><X /></button></header>
                 <button className="mobile-setting-option" onClick={() => updateSetting("autoDestroyWhenEmpty", !room.autoDestroyWhenEmpty)}>
                   <span><strong>Destroy when everyone leaves</strong><small>The room disappears after the last participant leaves.</small></span><b>{room.autoDestroyWhenEmpty ? "On" : "Off"}</b>
                 </button>
                 <button className="mobile-setting-option" onClick={() => updateSetting("directOnly", !room.directOnly)}>
                   <span><strong>Direct transfers only</strong><small>Files are never stored temporarily.</small></span><b>{room.directOnly ? "On" : "Off"}</b>
+                </button>
+                <button className="mobile-emergency-lock" onClick={() => { setEmergencyLock(true); setMenu(false); }}>
+                  <LockKeyhole /><span><strong>Emergency lock</strong><small>Change the room code and remove existing access.</small></span>
                 </button>
                 <div className="mobile-room-menu-divider" />
                 <button className="mobile-destroy-room"
@@ -4371,9 +4508,14 @@ export function RoomClient({
         <div className="composer-inner">
           <button
             className="add-button"
-            onClick={() =>
-              setSheet(true)
-            }
+            data-room-popup="sheet"
+            onClick={() => {
+              if (sheet) closeSheet();
+              else {
+                setSheetClosing(false);
+                setSheet(true);
+              }
+            }}
           >
             <Plus />
           </button>
@@ -4472,15 +4614,22 @@ export function RoomClient({
         />
       )}
 
+      {emergencyLock && (
+        <ConfirmEmergencyLock
+          loading={lockingRoom}
+          onClose={() => { if (!lockingRoom) setEmergencyLock(false); }}
+          onConfirm={lockRoomAccess}
+        />
+      )}
+
       {sheet && (
         <div
-          className="sheet-backdrop"
-          onClick={() =>
-            setSheet(false)
-          }
+          className={`sheet-backdrop${sheetClosing ? " popup-closing" : ""}`}
+          onClick={closeSheet}
         >
           <div
-            className="bottom-sheet"
+            className={`bottom-sheet${sheetClosing ? " popup-closing" : ""}`}
+            data-room-popup="sheet"
             onClick={(event) =>
               event.stopPropagation()
             }
@@ -4550,9 +4699,7 @@ export function RoomClient({
 
             <button
               className="sheet-close"
-              onClick={() =>
-                setSheet(false)
-              }
+              onClick={closeSheet}
             >
               Cancel
             </button>
@@ -4598,6 +4745,28 @@ export function RoomClient({
         </div>
       )}
     </main>
+  );
+}
+
+function ConfirmEmergencyLock({ onClose, onConfirm, loading }: { onClose: () => void; onConfirm: () => void; loading: boolean }) {
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <section className="modal emergency-lock-confirm" role="dialog" aria-modal="true" aria-labelledby="emergency-lock-title" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="lock-mark"><LockKeyhole /></div>
+        <h2 id="emergency-lock-title">Lock this room?</h2>
+        <p>Use this if your room code may have been shared with someone you don’t trust.</p>
+        <ul>
+          <li>A new room code will be generated.</li>
+          <li>The old room code will stop working immediately.</li>
+          <li>Existing participants will be disconnected.</li>
+          <li>Your files and room will remain available.</li>
+        </ul>
+        <div className="modal-actions">
+          <button className="button" onClick={onClose} disabled={loading}>Cancel</button>
+          <button className="button lock" onClick={onConfirm} disabled={loading}>{loading ? "Securing room…" : "Lock & generate new code"}</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -4728,6 +4897,12 @@ function StateScreen({
             "Everything shared here is no longer available.",
             "Create another room",
           ]
+        : kind === "access-changed"
+          ? [
+              "Room access changed",
+              "The room owner reset access to this room. Ask them for the new room code to reconnect.",
+              "Back to BlinkRoom",
+            ]
         : kind === "not-found"
           ? [
               "Nothing here.",

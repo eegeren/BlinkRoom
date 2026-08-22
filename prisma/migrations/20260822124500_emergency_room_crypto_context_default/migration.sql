@@ -1,0 +1,1 @@
+ALTER TABLE "Room" ALTER COLUMN "cryptoContext" SET DEFAULT '';

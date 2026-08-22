@@ -16,7 +16,7 @@ type DownloadRecord = {
   oneTimeStatus?: "AVAILABLE" | "RESERVED" | "CONSUMED";
   consumeTokenHash?: string | null;
   consumeReservedAt?: Date | null;
-  room: { status: "ACTIVE" | "EXPIRED" | "DESTROYED"; expiresAt: Date };
+  room: { status: "ACTIVE" | "EXPIRED" | "DESTROYED"; expiresAt: Date; accessVersion?: number };
   uploadSession: {
     status: "PENDING" | "UPLOADING" | "COMPLETED" | "ABORTED" | "FAILED";
     storageKey: string;
@@ -47,7 +47,7 @@ const defaultDependencies: Dependencies = {
         consumeTokenHash: true,
         consumeReservedAt: true,
         encryptedSize: true,
-        room: { select: { status: true, expiresAt: true } },
+        room: { select: { status: true, expiresAt: true, accessVersion: true } },
       },
     });
     if (!item) return null;
@@ -100,7 +100,10 @@ export function createDownloadGet(
     if (!authorized || !completedR2Upload)
       return NextResponse.json({ error: "File unavailable" }, { status: 404 });
     try {
-      const url = await dependencies.createUrl(item.storageKey!);
+      const source = await dependencies.createUrl(item.storageKey!);
+      const url = dependencies.storageKind === "local"
+        ? `${source}${source.includes("?") ? "&" : "?"}room=${encodeURIComponent(slug)}&v=${item.room.accessVersion ?? 1}`
+        : source;
       // For R2, signed-URL issuance is the last observable server-side success
       // point; object delivery completes directly between the browser and R2.
       if (dependencies.storageKind === "r2") await dependencies.track?.("DOWNLOAD_COMPLETED", item.encryptedSize ?? 0);

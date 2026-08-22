@@ -38,6 +38,8 @@ export const publicRoom = (
   room: NonNullable<Awaited<ReturnType<typeof refreshRoomStatus>>>,
 ) => ({
   slug: room.slug,
+  cryptoContext: room.cryptoContext || room.slug,
+  accessVersion: room.accessVersion,
   status: room.status,
   expiresAt: room.expiresAt.toISOString(),
   encryptedVerifier: room.status === "ACTIVE" ? room.encryptedVerifier : null,

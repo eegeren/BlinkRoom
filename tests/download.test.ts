@@ -13,7 +13,7 @@ test("local stored download returns the provider-aware encrypted route", async (
   const get = createDownloadGet({ storageKind: "local", checkRateLimit: () => true, findItem: async () => record(), createUrl: async () => "/api/files/ROOM-CODE/item-id" });
   const response = await call(get);
   assert.equal(response.status, 200);
-  assert.equal((await response.json()).url, "/api/files/ROOM-CODE/item-id");
+  assert.equal((await response.json()).url, "/api/files/ROOM-CODE/item-id?room=ROOM-CODE&v=1");
 });
 
 test("R2 stored download returns a signed URL and never the legacy file route", async () => {

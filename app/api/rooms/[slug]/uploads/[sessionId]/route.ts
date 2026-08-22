@@ -41,6 +41,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
   )
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
+    session.accessVersion !== session.room.accessVersion ||
     session.room.status !== "ACTIVE" ||
     session.room.expiresAt <= new Date() ||
     !session.multipartUploadId
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         await acquireRoomLock(tx, session.roomId);
         const active = await tx.room.findUnique({
           where: { id: session.roomId },
-          select: { status: true, expiresAt: true },
+          select: { status: true, expiresAt: true, accessVersion: true },
         });
         const current = await tx.uploadSession.findUnique({
           where: { id: session.id },
@@ -65,6 +66,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         });
         if (
           !active ||
+          active.accessVersion !== session.accessVersion ||
           active.status !== "ACTIVE" ||
           active.expiresAt <= new Date() ||
           current?.status !== "UPLOADING" ||

@@ -21,6 +21,8 @@ export type PublicItem = {
 };
 export type PublicRoom = {
   slug: string;
+  cryptoContext: string;
+  accessVersion: number;
   status: "ACTIVE" | "EXPIRED" | "DESTROYED";
   expiresAt: string;
   encryptedVerifier: string | null;

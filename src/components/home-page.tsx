@@ -14,9 +14,7 @@ import { createBlinkRoom } from "@/src/lib/create-room";
 import { clearPendingRoomCreation, preparePendingRoomCreation, retryPendingRoomCreation, startPendingRoomCreation } from "@/src/lib/pending-room-creation";
 import { beginInstantDropTiming, markInstantDropTiming } from "@/src/lib/instant-drop-timing";
 import { PreparingRoomShell } from "@/src/components/preparing-room-shell";
-import { SecurityIntro } from "@/src/components/security-intro";
-
-const SECURITY_INTRO_KEY = "blinkroom_security_intro_seen";
+import { SecurityProcessPlayer } from "@/src/components/security-process-player";
 
 export function HomePage({ maxFileSize }: { maxFileSize: number }) {
   const router = useRouter();
@@ -28,7 +26,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
   const [instantPreparing, setInstantPreparing] = useState(false);
   const [instantDrop, setInstantDrop] = useState<{ files: File[]; error: boolean } | null>(null);
   const [feedback, setFeedback] = useState("");
-  const [securityIntro, setSecurityIntro] = useState<"checking" | "first-visit" | "revisit" | "hidden">("checking");
+  const [securityExpanded, setSecurityExpanded] = useState(false);
   const creating = useRef(false);
   const validatingDrop = useRef(false);
   const instantAttempt = useRef(0);
@@ -125,15 +123,6 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     if (instantDrop) markInstantDropTiming("shell_render_committed");
   }, [instantDrop]);
   useEffect(() => {
-    const seen = localStorage.getItem(SECURITY_INTRO_KEY) === "true";
-    const timer = window.setTimeout(() => setSecurityIntro(seen ? "hidden" : "first-visit"), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-  function closeSecurityIntro() {
-    if (securityIntro === "first-visit") localStorage.setItem(SECURITY_INTRO_KEY, "true");
-    setSecurityIntro("hidden");
-  }
-  useEffect(() => {
     const close = (event: PointerEvent) => {
       if (!splitRef.current?.contains(event.target as Node))
         setLifetimeOpen(false);
@@ -158,8 +147,6 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     return () => { window.removeEventListener("dragenter", enter); window.removeEventListener("dragover", over); window.removeEventListener("dragleave", leave); window.removeEventListener("drop", drop); };
   });
   if (instantDrop) return <PreparingRoomShell files={instantDrop.files} error={instantDrop.error} onRetry={retryInstantRoom} onBack={backFromInstantRoom} />;
-  if (securityIntro === "checking") return <main className="security-intro-check" aria-label="Loading BlinkRoom" />;
-  if (securityIntro === "first-visit") return <SecurityIntro onContinue={closeSecurityIntro} />;
   return (
     <main className="home">
       {(dragging || instantPreparing) && <div className={`global-drop-overlay${instantPreparing ? " preparing" : ""}`} role="status" aria-live="polite"><FileUp /><h2>{instantPreparing ? "Preparing your room…" : "Drop it"}</h2><p>{instantPreparing ? "This may take a little while. Please keep this tab open." : "to share instantly"}</p></div>}
@@ -271,13 +258,12 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
           <Link href="/temporary-file-sharing">Temporary</Link>
           <Link href="/send-files-without-signup">No signup</Link>
           <Link href="/private-file-sharing">Private</Link>
-          <Link href="/secure-file-sharing">Secure sharing</Link>
+          <button onClick={() => setSecurityExpanded(true)}>Explore security</button>
           <Link href="/how-to-use">How to use</Link>
-          <button onClick={() => setSecurityIntro("revisit")}>Security</button>
         </nav>
         <span>Private by default · Gone by design</span>
       </footer>
-      {securityIntro === "revisit" && <SecurityIntro revisiting onContinue={closeSecurityIntro} />}
+      <SecurityProcessPlayer expanded={securityExpanded} onExpandedChange={setSecurityExpanded} />
     </main>
   );
 }
