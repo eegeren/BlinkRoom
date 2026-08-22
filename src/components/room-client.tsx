@@ -88,6 +88,9 @@ type Upload = {
     | "complete";
   error?: string;
   direct?: boolean;
+  uploadedBytes?: number;
+  bytesPerSecond?: number;
+  etaSeconds?: number;
 };
 
 type Participant = {
@@ -2163,6 +2166,7 @@ export function RoomClient({
           storageConfig.current
             ?.directUpload
         ) {
+          const uploadStartedAt = performance.now();
           await uploadStreamingStorage({
             slug,
             cryptoContext: cryptoContextRef.current,
@@ -2209,6 +2213,10 @@ export function RoomClient({
               progress,
             ) => {
               if (progress > 0) markInstantDropTiming("first_upload_progress");
+              const uploadedBytes = Math.min(file.size, Math.round(file.size * progress / 100));
+              const elapsedSeconds = (performance.now() - uploadStartedAt) / 1000;
+              const bytesPerSecond = elapsedSeconds >= 1 && uploadedBytes > 0 ? uploadedBytes / elapsedSeconds : 0;
+              const etaSeconds = bytesPerSecond > 0 ? Math.max(0, (file.size - uploadedBytes) / bytesPerSecond) : 0;
               setUploads(
                 (current) =>
                   current.map(
@@ -2226,6 +2234,9 @@ export function RoomClient({
                                 progress *
                                   0.65,
                               ),
+                            uploadedBytes,
+                            bytesPerSecond,
+                            etaSeconds,
                           }
                         : item,
                   ),
@@ -4410,6 +4421,15 @@ export function RoomClient({
                                 ? `Sending · ${upload.progress}%`
                                 : `Uploading securely · ${upload.progress}%`}
                   </span>
+
+                  {upload.status === "uploading" && upload.uploadedBytes !== undefined && (
+                    <small className="upload-transfer-meta">
+                      {formatSize(upload.uploadedBytes)} / {formatSize(upload.file.size)}
+                      {upload.bytesPerSecond && upload.etaSeconds !== undefined
+                        ? ` · ${formatSize(upload.bytesPerSecond)}/s · ~${Math.max(1, Math.ceil(upload.etaSeconds))} sec remaining`
+                        : ""}
+                    </small>
+                  )}
 
                   {upload.status !==
                     "failed" &&

@@ -93,3 +93,4 @@ html.dark .feedback-toast{background:var(--text);color:var(--bg)}html.dark .room
   @keyframes room-sheet-out{to{transform:translateY(100%)}}
 }
 @media(prefers-reduced-motion:reduce){.room-menu,.lifetime-popover,.bottom-sheet,.sheet-backdrop,.mobile-room-menu-backdrop,.mobile-room-menu-backdrop .mobile-room-menu{animation:none!important}}
+.upload-card .upload-transfer-meta{font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums}
