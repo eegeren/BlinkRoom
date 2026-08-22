@@ -23,6 +23,7 @@ const completeSchema = z
   .strict();
 type Ctx = { params: Promise<{ slug: string; sessionId: string }> };
 export async function POST(req: NextRequest, { params }: Ctx) {
+  const analyticsStartedAt = Date.now();
   const { slug, sessionId } = await params;
   const input = completeSchema.safeParse(await req.json().catch(() => null));
   if (!input.success)
@@ -138,7 +139,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         createdAt: item.createdAt.toISOString(),
       };
     roomChannel.itemCreated(slug, output);
-    await trackMetric("UPLOAD_COMPLETED", { bytes: Number(session.encryptedSize) });
+    await trackMetric("UPLOAD_COMPLETED", { bytes: Number(session.encryptedSize), durationMs: Date.now() - analyticsStartedAt });
     return NextResponse.json(output);
   } catch {
     await db.uploadSession.updateMany({

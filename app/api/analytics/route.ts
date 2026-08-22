@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { trackMetric, trackSessionStarted } from "@/src/server/analytics";
+import { classifyClient, trackMetric, trackSessionStarted } from "@/src/server/analytics";
 
 const obviousBot = (ua: string) => /bot|crawler|spider|headless|preview|facebookexternalhit|slurp/i.test(ua);
 export async function POST(req: Request) {
@@ -8,7 +8,7 @@ export async function POST(req: Request) {
   if (!body || (body.event !== "SESSION_STARTED" && body.event !== "PAGE_VIEW")) return NextResponse.json({ error: "Invalid metric" }, { status: 400 });
   if (body.event === "SESSION_STARTED") {
     if (typeof body.sessionId !== "string") return NextResponse.json({ error: "Invalid session" }, { status: 400 });
-    await trackSessionStarted(body.sessionId);
+    await trackSessionStarted(body.sessionId, new Date(), classifyClient(req.headers.get("user-agent") ?? ""));
   } else await trackMetric("PAGE_VIEW");
   return new NextResponse(null, { status: 204, headers: { "Cache-Control": "no-store" } });
 }

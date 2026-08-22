@@ -163,6 +163,26 @@ model AnalyticsHourly {
   downloadBytes   BigInt   @default(0)
   failedUploads   BigInt   @default(0)
   failedDownloads BigInt   @default(0)
+  uploadDurationMs BigInt   @default(0)
+  downloadDurationMs BigInt @default(0)
+  desktopSessions BigInt   @default(0)
+  mobileSessions  BigInt   @default(0)
+  tabletSessions  BigInt   @default(0)
+  chromeSessions  BigInt   @default(0)
+  safariSessions  BigInt   @default(0)
+  firefoxSessions BigInt   @default(0)
+  edgeSessions    BigInt   @default(0)
+  otherBrowserSessions BigInt @default(0)
+}
+
+/// Anonymous operational event stream. Deliberately contains no foreign keys,
+/// request metadata, IP address, user-agent, room id, or file metadata.
+model AnalyticsRecentEvent {
+  id        String   @id @default(uuid())
+  event     String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 /// A short-lived SHA-256 digest of a random sessionStorage UUID. It exists

@@ -5,6 +5,7 @@ import { acquireRoomLock, publicRoom, refreshRoomStatus } from "@/src/server/roo
 import { roomChannel } from "@/src/server/realtime";
 import { roomDurationSchema } from "@/src/lib/duration";
 import { cleanupRoomStorage } from "@/src/server/storage/cleanup";
+import { trackMetric } from "@/src/server/analytics";
 
 type Ctx = { params: Promise<{ slug: string }> };
 export async function GET(_: NextRequest, { params }: Ctx) {
@@ -36,6 +37,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   if (!token || tokenHash(token) !== room.ownerTokenHash) return NextResponse.json({ error: "Owner only" }, { status: 403 });
   const destroyed = await db.$transaction(async (tx) => { await acquireRoomLock(tx, room.id); const current = await tx.room.findUnique({ where: { id: room.id }, select: { status: true, expiresAt: true } }); const now = new Date(); if (!current || current.status !== "ACTIVE" || current.expiresAt <= now) return false; await tx.room.update({ where: { id: room.id }, data: { status: "DESTROYED", destroyedAt: now, cleanupStatus: "PENDING", cleanupLastError: null, cleanupUpdatedAt: now } }); return true; });
   if (!destroyed) return NextResponse.json({ error: "Room is no longer active" }, { status: 410 });
+  await trackMetric("ROOM_DESTROYED");
   roomChannel.destroyed(slug); queueMicrotask(() => { void cleanupRoomStorage(room.id, slug).catch(() => undefined); });
   return NextResponse.json({ ok: true });
 }

@@ -87,6 +87,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ slug: string }> },
 ) {
+  const analyticsStartedAt = Date.now();
   if (storage.kind !== "local")
     return NextResponse.json(
       { error: "Use direct encrypted upload" },
@@ -250,7 +251,7 @@ export async function POST(
         createdAt: item.createdAt.toISOString(),
       };
     roomChannel.itemCreated(slug, output);
-    await trackMetric("UPLOAD_COMPLETED", { bytes: upload.size });
+    await trackMetric("UPLOAD_COMPLETED", { bytes: upload.size, durationMs: Date.now() - analyticsStartedAt });
     return NextResponse.json(output, { status: result.existing ? 200 : 201 });
   } catch (error) {
     await storage.deleteObject(upload.storageKey);
