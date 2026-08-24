@@ -15,6 +15,7 @@ import { clearPendingRoomCreation, preparePendingRoomCreation, retryPendingRoomC
 import { beginInstantDropTiming, markInstantDropTiming } from "@/src/lib/instant-drop-timing";
 import { PreparingRoomShell } from "@/src/components/preparing-room-shell";
 import { SecurityProcessPlayer } from "@/src/components/security-process-player";
+import footerStyles from "@/src/components/home-footer-links.module.css";
 import { MetadataProtectionIndicator } from "@/src/components/metadata-protection-indicator";
 
 export function HomePage({ maxFileSize }: { maxFileSize: number }) {
@@ -255,12 +256,14 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
       </section>
       <footer>
         <span>{brand.tagline}</span>
-        <nav className="home-seo-links" aria-label="Explore BlinkRoom">
+        <nav className={`home-seo-links ${footerStyles.footerLinks}`} aria-label="Explore BlinkRoom">
           <Link href="/encrypted-file-sharing">Encrypted</Link>
           <Link href="/temporary-file-sharing">Temporary</Link>
           <Link href="/send-files-without-signup">No signup</Link>
           <Link href="/private-file-sharing">Private</Link>
           <button onClick={() => setSecurityExpanded(true)}>Explore security</button>
+          <a className={footerStyles.mailLink} href="mailto:support@blinkroom.org?subject=BlinkRoom%20Support">Support</a>
+          <a className={footerStyles.mailLink} href="mailto:info@blinkroom.org?subject=BlinkRoom%20Contact">Contact</a>
           <Link href="/how-to-use">How to use</Link>
         </nav>
         <span>Private by default · Gone by design</span>

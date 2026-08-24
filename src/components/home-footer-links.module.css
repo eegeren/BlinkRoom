@@ -1,0 +1,10 @@
+@media (max-width: 1050px) {
+  .footerLinks {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .mailLink.mailLink {
+    display: inline;
+  }
+}
