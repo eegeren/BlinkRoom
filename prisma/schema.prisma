@@ -193,3 +193,44 @@ model AnalyticsSessionDedupe {
 
   @@index([expiresAt])
 }
+
+/// A rotating anonymous browser ID stored only as a one-way digest. No IP,
+/// user-agent, fingerprint, URL, referrer, or account data is retained.
+model AnalyticsVisitor {
+  visitorHash String   @id
+  firstSeen   DateTime
+  lastSeen    DateTime
+  firstSource String
+  days        AnalyticsVisitorDay[]
+
+  @@index([lastSeen])
+  @@index([firstSource])
+}
+
+model AnalyticsVisitorDay {
+  visitorHash String
+  visitor     AnalyticsVisitor @relation(fields: [visitorHash], references: [visitorHash], onDelete: Cascade)
+  day         DateTime
+  returning   Boolean @default(false)
+
+  @@id([visitorHash, day])
+  @@index([day, returning])
+}
+
+/// One privacy-preserving digest per room that completed a cross-participant
+/// transfer. The room ID itself is never retained in analytics storage.
+model AnalyticsSuccessfulTransfer {
+  roomHash    String   @id
+  completedAt DateTime @default(now())
+
+  @@index([completedAt])
+}
+
+/// Short-lived digest of a browser-generated download action UUID. This makes
+/// retries idempotent without linking a download to a person.
+model AnalyticsDownloadDedupe {
+  actionHash String   @id
+  expiresAt  DateTime
+
+  @@index([expiresAt])
+}

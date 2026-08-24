@@ -254,7 +254,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
           ))}
         </div>
       </section>
-      <footer>
+      <footer className={footerStyles.footerSafeArea}>
         <span>{brand.tagline}</span>
         <nav className={`home-seo-links ${footerStyles.footerLinks}`} aria-label="Explore BlinkRoom">
           <Link href="/encrypted-file-sharing">Encrypted</Link>

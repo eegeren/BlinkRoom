@@ -3286,6 +3286,7 @@ export function RoomClient({
   async function downloadItem(
     item: DecryptedItem,
   ) {
+    const analyticsActionId = crypto.randomUUID();
     const key = keyRef.current;
 
     if (
@@ -3411,6 +3412,11 @@ export function RoomClient({
         );
       }
 
+      void fetch("/api/analytics", {
+        method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+        body: JSON.stringify({ event: "DOWNLOAD_COMPLETED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, participantId: identity.id }),
+      });
+
       trackEvent(
         "file_download_completed",
         {
@@ -3454,6 +3460,10 @@ export function RoomClient({
         1000,
       );
     } catch (cause) {
+      void fetch("/api/analytics", {
+        method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
+        body: JSON.stringify({ event: "DOWNLOAD_FAILED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, participantId: identity.id }),
+      });
       const category =
         errorCategory(cause);
 

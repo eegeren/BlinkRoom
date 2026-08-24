@@ -8,3 +8,9 @@
     display: inline;
   }
 }
+
+@media (max-width: 720px) {
+  .footerSafeArea.footerSafeArea {
+    padding-bottom: calc(20px + 52px + max(14px, env(safe-area-inset-bottom)) + 16px);
+  }
+}

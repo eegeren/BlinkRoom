@@ -5,7 +5,6 @@ import { rateLimiter } from "@/src/server/rate-limit";
 import { storage } from "@/src/server/storage";
 import { canAuthorizeStoredDownload } from "@/src/server/storage/quota";
 import { tokenHash } from "@/src/lib/security";
-import { trackMetric } from "@/src/server/analytics";
 
 type DownloadRecord = {
   id: string;
@@ -28,7 +27,6 @@ type Dependencies = {
   checkRateLimit: (key: string) => boolean;
   findItem: (slug: string, itemId: string) => Promise<DownloadRecord | null>;
   createUrl: (storageKey: string) => Promise<string>;
-  track?: (event: "DOWNLOAD_COMPLETED" | "DOWNLOAD_FAILED", bytes?: number) => Promise<void>;
 };
 
 const defaultDependencies: Dependencies = {
@@ -58,7 +56,6 @@ const defaultDependencies: Dependencies = {
     return { ...item, uploadSession };
   },
   createUrl: (storageKey) => storage.getPublicOrSignedUrl(storageKey),
-  track: (event, bytes) => trackMetric(event, { bytes }),
 };
 
 export function createDownloadGet(
@@ -104,9 +101,6 @@ export function createDownloadGet(
       const url = dependencies.storageKind === "local"
         ? `${source}${source.includes("?") ? "&" : "?"}room=${encodeURIComponent(slug)}&v=${item.room.accessVersion ?? 1}`
         : source;
-      // For R2, signed-URL issuance is the last observable server-side success
-      // point; object delivery completes directly between the browser and R2.
-      if (dependencies.storageKind === "r2") await dependencies.track?.("DOWNLOAD_COMPLETED", item.encryptedSize ?? 0);
       return NextResponse.json(
         {
           url,
@@ -115,7 +109,6 @@ export function createDownloadGet(
         { headers: { "Cache-Control": "no-store" } },
       );
     } catch {
-      if (dependencies.storageKind === "r2") await dependencies.track?.("DOWNLOAD_FAILED");
       return NextResponse.json({ error: "File unavailable" }, { status: 404 });
     }
   };

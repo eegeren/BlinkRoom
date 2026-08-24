@@ -1,5 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { db } from "@/src/lib/db";
+import type { TrafficSource } from "@/src/lib/analytics-acquisition";
+import { trafficSourceLabels, trafficSources } from "@/src/lib/analytics-acquisition";
 
 export type MetricEvent = "PAGE_VIEW" | "ROOM_CREATED" | "UPLOAD_COMPLETED" | "DOWNLOAD_COMPLETED" | "UPLOAD_FAILED" | "DOWNLOAD_FAILED" | "ROOM_DESTROYED";
 export type AnalyticsRange = "24h" | "7d" | "30d" | "all";
@@ -48,14 +51,41 @@ export function classifyClient(userAgent: string): { device: Device; browser: Br
   const browser: Browser = /edg\//.test(ua) ? "edge" : /firefox|fxios/.test(ua) ? "firefox" : /chrome|crios/.test(ua) ? "chrome" : /safari/.test(ua) ? "safari" : "other";
   return { device, browser };
 }
-export async function trackSessionStarted(sessionId: string, now = new Date(), client: { device: Device; browser: Browser } = { device: "desktop", browser: "other" }) {
-  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(sessionId)) return;
+export async function trackSessionStarted(sessionId: string, visitorId: string, source: TrafficSource, now = new Date(), client: { device: Device; browser: Browser } = { device: "desktop", browser: "other" }) {
+  if (!/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(sessionId) || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(visitorId) || !trafficSources.includes(source)) return;
   const sessionHash = createHash("sha256").update(sessionId).digest("hex");
+  const visitorHash = createHash("sha256").update(visitorId).digest("hex");
   try { await db.$transaction(async (tx) => {
     await tx.analyticsSessionDedupe.deleteMany({ where: { expiresAt: { lte: now } } });
     const inserted = await tx.$executeRaw`INSERT INTO "AnalyticsSessionDedupe" ("sessionHash", "expiresAt") VALUES (${sessionHash}, ${new Date(now.getTime() + 30 * 60_000)}) ON CONFLICT ("sessionHash") DO NOTHING`;
-    if (inserted === 1) { const bucketStart = hourStart(now), values = { sessions: ONE, [`${client.device}Sessions`]: ONE, [`${client.browser}Sessions`]: ONE }; await tx.analyticsHourly.upsert({ where: { bucketStart }, create: { bucketStart, ...values }, update: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { increment: value }])) }); }
+    const existing = await tx.analyticsVisitor.findUnique({ where: { visitorHash }, select: { firstSeen: true } });
+    await tx.analyticsVisitor.upsert({ where: { visitorHash }, create: { visitorHash, firstSeen: now, lastSeen: now, firstSource: source }, update: { lastSeen: now } });
+    await tx.analyticsVisitorDay.upsert({ where: { visitorHash_day: { visitorHash, day: dayStart(now) } }, create: { visitorHash, day: dayStart(now), returning: Boolean(existing && existing.firstSeen < dayStart(now)) }, update: {} });
+    if (inserted === 1) {
+      const bucketStart = hourStart(now), values = { sessions: ONE, [`${client.device}Sessions`]: ONE, [`${client.browser}Sessions`]: ONE }; await tx.analyticsHourly.upsert({ where: { bucketStart }, create: { bucketStart, ...values }, update: Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { increment: value }])) });
+    }
   }); } catch { console.error("[ANALYTICS_ERROR] session increment failed"); }
+}
+
+export async function trackDownloadAction(input: { successful: boolean; actionId: string; roomSlug: string; itemId: string; participantId: string; durationMs?: number }, now = new Date()) {
+  const actionHash = createHash("sha256").update(input.actionId).digest("hex");
+  try { await db.$transaction(async (tx) => {
+    await tx.analyticsDownloadDedupe.deleteMany({ where: { expiresAt: { lte: now } } });
+    const inserted = await tx.$executeRaw`INSERT INTO "AnalyticsDownloadDedupe" ("actionHash", "expiresAt") VALUES (${actionHash}, ${new Date(now.getTime() + 86_400_000)}) ON CONFLICT ("actionHash") DO NOTHING`;
+    if (inserted !== 1) return;
+    if (!input.successful) {
+      const bucketStart = hourStart(now); await tx.analyticsHourly.upsert({ where: { bucketStart }, create: { bucketStart, failedDownloads: ONE }, update: { failedDownloads: { increment: ONE } } }); return;
+    }
+    const item = await tx.roomItem.findFirst({ where: { id: input.itemId, room: { slug: input.roomSlug } }, select: { roomId: true, senderId: true, encryptedSize: true } });
+    if (!item) return;
+    const bytes = BigInt(Math.max(0, item.encryptedSize ?? 0)), duration = BigInt(Math.max(0, Math.trunc(input.durationMs ?? 0))), bucketStart = hourStart(now);
+    await tx.analyticsHourly.upsert({ where: { bucketStart }, create: { bucketStart, filesDownloaded: ONE, downloadBytes: bytes, downloadDurationMs: duration }, update: { filesDownloaded: { increment: ONE }, downloadBytes: { increment: bytes }, downloadDurationMs: { increment: duration } } });
+    await tx.analyticsRecentEvent.create({ data: { event: "File Downloaded", createdAt: now } });
+    if (item.senderId !== input.participantId) {
+      const roomHash = createHash("sha256").update(item.roomId).digest("hex");
+      await tx.analyticsSuccessfulTransfer.upsert({ where: { roomHash }, create: { roomHash, completedAt: now }, update: {} });
+    }
+  }); } catch { console.error("[ANALYTICS_ERROR] download action failed"); }
 }
 
 export function rangeStart(range: AnalyticsRange, now = new Date()) { const hours = range === "24h" ? 24 : range === "7d" ? 168 : range === "30d" ? 720 : 0; return hours ? new Date(now.getTime() - hours * 3_600_000) : undefined; }
@@ -70,13 +100,34 @@ const percent = (part: bigint, total: bigint) => total ? Math.round(Number(part 
 const change = (current: bigint, previous: bigint) => previous ? Math.round(Number((current - previous) * HUNDRED * HUNDRED / previous)) / 100 : current ? 100 : 0;
 const comparison = (current: Required<Increment>, previous: Required<Increment>) => Object.fromEntries(keys.map((key) => [key, change(current[key], previous[key])])) as Record<keyof Increment, number>;
 
+type AudienceRow = { uniqueVisitors: bigint; returningVisitors: bigint };
+async function audienceFor(start: Date | undefined, end: Date) {
+  const lower = start ? Prisma.sql`AND d."day" >= ${dayStart(start)}` : Prisma.empty;
+  const [row] = await db.$queryRaw<AudienceRow[]>(Prisma.sql`
+    SELECT COUNT(DISTINCT d."visitorHash")::bigint AS "uniqueVisitors",
+      COUNT(DISTINCT d."visitorHash") FILTER (WHERE d."returning")::bigint AS "returningVisitors"
+    FROM "AnalyticsVisitorDay" d WHERE d."day" <= ${dayStart(end)} ${lower}`);
+  return row ?? { uniqueVisitors: ZERO, returningVisitors: ZERO };
+}
+
+async function trafficFor(start: Date | undefined, end: Date) {
+  const lower = start ? Prisma.sql`AND d."day" >= ${dayStart(start)}` : Prisma.empty;
+  const rows = await db.$queryRaw<Array<{ source: string; visitors: bigint }>>(Prisma.sql`
+    SELECT v."firstSource" AS source, COUNT(DISTINCT d."visitorHash")::bigint AS visitors
+    FROM "AnalyticsVisitorDay" d JOIN "AnalyticsVisitor" v ON v."visitorHash" = d."visitorHash"
+    WHERE d."day" <= ${dayStart(end)} ${lower} GROUP BY v."firstSource"`);
+  const result = Object.fromEntries(trafficSources.map(source => [trafficSourceLabels[source], 0])) as Record<string, number>;
+  for (const row of rows) result[trafficSourceLabels[row.source as TrafficSource] ?? "Other"] += Number(row.visitors);
+  return result;
+}
+
 export async function getAnalytics(range: AnalyticsRange, now = new Date()) {
   const start = rangeStart(range, now), priorStart = previousStart(range, start, now);
   const allRows = await db.analyticsHourly.findMany({ where: priorStart ? { bucketStart: { gte: priorStart, lte: now } } : undefined, orderBy: { bucketStart: "asc" } });
   const rows = start ? allRows.filter((row) => row.bucketStart >= start) : allRows;
   const priorRows = start && priorStart ? allRows.filter((row) => row.bucketStart >= priorStart && row.bucketStart < start) : [];
   const total = sumRows(rows), previous = sumRows(priorRows), dateWhere = start ? { gte: start, lte: now } : { lte: now };
-  const [activeRooms, expiredRooms, destroyedRooms, roomLifetimes, largestFile, fileTypes, recentActivity] = await Promise.all([
+  const [activeRooms, expiredRooms, destroyedRooms, roomLifetimes, largestFile, fileTypes, recentActivity, audience, priorAudience, trafficSourcesResult, successfulTransfers, priorSuccessfulTransfers, roomsWithUploads] = await Promise.all([
     db.room.count({ where: { status: "ACTIVE", destroyedAt: null, expiresAt: { gt: now } } }),
     db.room.count({ where: { status: "EXPIRED", expiresAt: dateWhere } }),
     db.room.count({ where: { status: "DESTROYED", destroyedAt: dateWhere } }),
@@ -84,6 +135,12 @@ export async function getAnalytics(range: AnalyticsRange, now = new Date()) {
     db.roomItem.aggregate({ where: { createdAt: dateWhere, encryptedSize: { not: null } }, _max: { encryptedSize: true } }),
     db.roomItem.groupBy({ by: ["type"], where: { createdAt: dateWhere }, _count: { _all: true } }),
     db.analyticsRecentEvent.findMany({ where: { createdAt: dateWhere }, orderBy: { createdAt: "desc" }, take: 24, select: { event: true, createdAt: true } }),
+    audienceFor(start, now),
+    start && priorStart ? audienceFor(priorStart, start) : Promise.resolve({ uniqueVisitors: ZERO, returningVisitors: ZERO }),
+    trafficFor(start, now),
+    db.analyticsSuccessfulTransfer.count({ where: { completedAt: dateWhere } }),
+    start && priorStart ? db.analyticsSuccessfulTransfer.count({ where: { completedAt: { gte: priorStart, lt: start } } }) : Promise.resolve(0),
+    db.room.count({ where: { items: { some: { createdAt: dateWhere, encryptedSize: { not: null } } } } }),
   ]);
   const averageLifetimeMs = roomLifetimes.length ? Math.round(roomLifetimes.reduce((sum, room) => sum + Math.max(0, (room.destroyedAt ?? room.expiresAt).getTime() - room.createdAt.getTime()), 0) / roomLifetimes.length) : 0;
   const uploadAttempts = total.filesUploaded + total.failedUploads, downloadAttempts = total.filesDownloaded + total.failedDownloads;
@@ -91,7 +148,10 @@ export async function getAnalytics(range: AnalyticsRange, now = new Date()) {
   return {
     range, collectedFrom: rows[0]?.bucketStart.toISOString() ?? null,
     summary: { visits: Number(total.sessions), pageViews: Number(total.pageViews), roomsCreated: Number(total.roomsCreated), activeRooms, filesUploaded: Number(total.filesUploaded), filesDownloaded: Number(total.filesDownloaded), uploadBytes: total.uploadBytes.toString(), downloadBytes: total.downloadBytes.toString(), averageFileSize: (total.filesUploaded ? total.uploadBytes / total.filesUploaded : ZERO).toString(), failedUploads: Number(total.failedUploads), failedDownloads: Number(total.failedDownloads), conversionRate: percent(total.roomsCreated, total.sessions) },
-    comparison: comparison(total, previous), hasComparison: Boolean(start),
+    comparison: { ...comparison(total, previous), uniqueVisitors: change(audience.uniqueVisitors, priorAudience.uniqueVisitors), returningVisitors: change(audience.returningVisitors, priorAudience.returningVisitors), successfulTransfers: change(BigInt(successfulTransfers), BigInt(priorSuccessfulTransfers)) }, hasComparison: Boolean(start),
+    audience: { uniqueVisitors: Number(audience.uniqueVisitors), returningVisitors: Number(audience.returningVisitors), returningRate: percent(audience.returningVisitors, audience.uniqueVisitors) },
+    successfulTransfers: { count: successfulTransfers, rate: roomsWithUploads ? Math.round(successfulTransfers / roomsWithUploads * 10_000) / 100 : 0, denominator: "rooms with at least one upload in the selected period" },
+    trafficSources: trafficSourcesResult,
     timeline: aggregateTimeline(rows, range),
     funnel: [{ label: "Visits", value: Number(total.sessions) }, { label: "Rooms Created", value: Number(total.roomsCreated) }, { label: "Files Uploaded", value: Number(total.filesUploaded) }, { label: "Files Downloaded", value: Number(total.filesDownloaded) }],
     rooms: { averageLifetimeMs, averageFilesPerRoom: total.roomsCreated ? Number(total.filesUploaded) / Number(total.roomsCreated) : 0, averageDownloadsPerRoom: total.roomsCreated ? Number(total.filesDownloaded) / Number(total.roomsCreated) : 0, expiredRooms, destroyedRooms, activeRooms },
