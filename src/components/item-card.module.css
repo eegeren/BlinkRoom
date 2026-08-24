@@ -1,0 +1,128 @@
+.fileRow.fileRow {
+  min-width: 0;
+  padding: 16px 0;
+  grid-template-columns: 56px minmax(0, 1fr) auto auto 24px;
+  gap: 14px;
+}
+
+.thumbnail,
+.filePreview {
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.thumbnail {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.thumbnail:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.filePreview.filePreview {
+  display: grid;
+  place-items: center;
+}
+
+.filePreview svg {
+  width: 20px;
+}
+
+.details.details {
+  gap: 4px;
+  overflow: hidden;
+}
+
+.titleLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.titleLine strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.titleLine :global(.file-metadata-protection) {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.metadata.metadata {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download.download {
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .fileRow.fileRow {
+    padding: 13px 0;
+    grid-template-columns: 46px minmax(0, 1fr) 34px;
+    gap: 11px;
+  }
+
+  .thumbnail,
+  .filePreview {
+    width: 46px;
+    height: 46px;
+    min-width: 46px;
+  }
+
+  .owner,
+  .remove {
+    display: none;
+  }
+
+  .download.download {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    display: grid;
+    place-items: center;
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .download span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .download svg {
+    width: 15px;
+  }
+
+  .titleLine {
+    gap: 5px;
+  }
+
+  .titleLine :global(.file-metadata-protection button span) {
+    display: none;
+  }
+}

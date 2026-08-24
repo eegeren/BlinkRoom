@@ -1,0 +1,56 @@
+.redirectStatus {
+  width: 100%;
+  max-width: 420px;
+  margin: -8px auto 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 9px;
+}
+
+.redirectStatus > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.redirectStatus b {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.progress {
+  width: 100%;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.progress i {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  animation: redirect-progress 3000ms linear forwards;
+}
+
+.redirectStatus small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+@keyframes redirect-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (max-width: 480px) {
+  .redirectStatus {
+    max-width: 100%;
+  }
+}

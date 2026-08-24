@@ -4,8 +4,8 @@ export const metadataProtectionCopy = {
     "File names and file types are encrypted before leaving your device.",
   tooltip:
     "Your file name and file type are encrypted locally before being sent to BlinkRoom.",
-  heading: "Encrypted metadata",
+  heading: "Metadata protection",
   description:
-    "File names and file types are encrypted before they leave your device. BlinkRoom servers only receive encrypted metadata.",
+    "File names and file types are encrypted in your browser before they leave your device. BlinkRoom servers receive only encrypted metadata, never the original name or type.",
   uploadError: "Secure metadata encryption failed. Please try again.",
 } as const;

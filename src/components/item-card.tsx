@@ -6,11 +6,15 @@ import {
   Check,
   Copy,
   File,
+  FileArchive,
+  FileText,
   Link2,
   Trash2,
+  Video,
 } from "lucide-react";
 import type { DecryptedItem } from "@/src/lib/types";
 import { MetadataProtectionIndicator } from "@/src/components/metadata-protection-indicator";
+import styles from "./item-card.module.css";
 const size = (n: number | null) =>
   !n
     ? ""
@@ -20,6 +24,19 @@ const size = (n: number | null) =>
 const looksLikeCode = (value: string) =>
   value.includes("\n") ||
   /^(?:npm|pnpm|yarn|git|curl|const|let|function|SELECT|docker)\b/.test(value);
+const fileKind = (item: DecryptedItem) => {
+  const extension = item.fileName?.split(".").pop();
+  if (extension && extension !== item.fileName && extension.length <= 6)
+    return extension.toUpperCase();
+  return item.mimeType?.split("/").pop()?.toUpperCase() ?? "FILE";
+};
+const fileIcon = (mimeType: string | null) => {
+  if (mimeType === "application/pdf") return <FileText />;
+  if (mimeType?.startsWith("video/")) return <Video />;
+  if (mimeType && /(?:zip|rar|7z|tar|gzip|archive)/i.test(mimeType))
+    return <FileArchive />;
+  return <File />;
+};
 export function ItemCard({
   item,
   you,
@@ -102,52 +119,30 @@ export function ItemCard({
         </div>
       </article>
     );
-  if (item.type === "IMAGE")
-    return (
-      <article className="editorial-item image-item">
-        {item.objectUrl ? (
-          <button className="image-preview" onClick={onPreview}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              loading="lazy"
-              src={item.objectUrl}
-              alt={item.fileName ?? "Shared image"}
-            />
-          </button>
-        ) : (
-          <div className="image-preview unavailable">
-            {item.oneTime && item.oneTimeStatus === "AVAILABLE"
-              ? "Open once"
-              : "No longer available"}
-          </div>
-        )}
-        <div className="image-caption">
-          <div>
-            <strong>{item.fileName}</strong>
-            {item.metadataProtected && <MetadataProtectionIndicator file />}
-            <span>
-              {size(item.fileSize)} · {you ? "You" : item.senderName}
-              {item.oneTime ? " · Open once" : ""}
-            </span>
-          </div>
-          {item.locallyAvailable && item.oneTimeStatus !== "CONSUMED" && (
-            <button className="item-download" onClick={onDownload}>
-              {item.oneTime ? "Open once" : "Download"} <ArrowDown />
-            </button>
-          )}
-        </div>
-      </article>
-    );
+  const isImage = item.type === "IMAGE";
   return (
-    <article className="editorial-item file-item">
-      <div className="file-glyph">
-        <File />
-      </div>
-      <div className="file-details">
-        <strong>{item.fileName}</strong>
-        {item.metadataProtected && <MetadataProtectionIndicator file />}
-        <span>
-          {size(item.fileSize)}
+    <article className={`editorial-item file-item ${styles.fileRow}`}>
+      {isImage && item.objectUrl ? (
+        <button
+          className={styles.thumbnail}
+          onClick={onPreview}
+          aria-label={`Preview ${item.fileName ?? "image"}`}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img loading="lazy" src={item.objectUrl} alt="" />
+        </button>
+      ) : (
+        <div className={`file-glyph ${styles.filePreview}`}>
+          {fileIcon(item.mimeType)}
+        </div>
+      )}
+      <div className={`file-details ${styles.details}`}>
+        <div className={styles.titleLine}>
+          <strong title={item.fileName ?? undefined}>{item.fileName}</strong>
+          {item.metadataProtected && <MetadataProtectionIndicator file />}
+        </div>
+        <span className={styles.metadata}>
+          {fileKind(item)} · {size(item.fileSize)} · {when}
           {!item.locallyAvailable || item.oneTimeStatus === "CONSUMED"
             ? " · No longer available"
             : item.oneTime
@@ -155,16 +150,16 @@ export function ItemCard({
               : ""}
         </span>
       </div>
-      <div className="file-owner">
+      <div className={`file-owner ${styles.owner}`}>
         {you ? "You" : item.senderName} · {when}
       </div>
       {item.locallyAvailable && item.oneTimeStatus !== "CONSUMED" && (
-        <button className="item-download" onClick={onDownload}>
-          {item.oneTime ? "Open once" : "Download"} <ArrowDown />
+        <button className={`item-download ${styles.download}`} onClick={onDownload}>
+          <span>{item.oneTime ? "Open once" : "Download"}</span> <ArrowDown />
         </button>
       )}
       {you && (
-        <button className="file-delete" onClick={onDelete} title="Delete">
+        <button className={`file-delete ${styles.remove}`} onClick={onDelete} title="Delete">
           <Trash2 />
         </button>
       )}

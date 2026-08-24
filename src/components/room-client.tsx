@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { io } from "socket.io-client";
 import {
   ArrowUp,
@@ -70,6 +71,8 @@ import { filesFromDropSnapshot, snapshotDrop } from "@/src/lib/drop-files";
 import { createQueuedUploads } from "@/src/lib/upload-queue";
 import { markInstantDropTiming } from "@/src/lib/instant-drop-timing";
 import { PreparingRoomShell } from "@/src/components/preparing-room-shell";
+import previewStyles from "@/src/components/image-preview-dialog.module.css";
+import redirectStyles from "@/src/components/state-screen-redirect.module.css";
 
 import {
   errorCategory,
@@ -838,6 +841,20 @@ export function RoomClient({
       document.body.style.overflow = previousOverflow;
     };
   }, [menu]);
+
+  useEffect(() => {
+    if (!preview) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreview(null);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [preview]);
 
   useEffect(() => {
     if (!menu && !sheet && !lifetime) return;
@@ -4764,39 +4781,35 @@ export function RoomClient({
 
       {preview?.objectUrl && (
         <div
-          className="lightbox"
-          onClick={() =>
-            setPreview(null)
-          }
+          className={`lightbox ${previewStyles.backdrop}`}
+          onMouseDown={() => setPreview(null)}
         >
-          <button>
-            <X />
-          </button>
-
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={
-              preview.objectUrl
-            }
-            alt={
-              preview.fileName ??
-              "Preview"
-            }
-          />
-
-          <button
-            className="button filled"
-            onClick={(event) => {
-              event.stopPropagation();
-
-              void downloadItem(
-                preview,
-              );
-            }}
+          <section
+            className={previewStyles.dialog}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="image-preview-title"
+            onMouseDown={(event) => event.stopPropagation()}
           >
-            <FileUp />
-            Download
-          </button>
+            <header>
+              <strong id="image-preview-title">{preview.fileName ?? "Image preview"}</strong>
+              <button aria-label="Close preview" onClick={() => setPreview(null)}>
+                <X />
+              </button>
+            </header>
+
+            <div className={previewStyles.imageWrap}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={preview.objectUrl} alt={preview.fileName ?? "Preview"} />
+            </div>
+
+            <footer>
+              <button className="button filled" onClick={() => void downloadItem(preview)}>
+                <FileUp />
+                Download
+              </button>
+            </footer>
+          </section>
         </div>
       )}
     </main>
@@ -4939,6 +4952,22 @@ function StateScreen({
 }: {
   kind: string;
 }) {
+  const router = useRouter();
+  const [countdown, setCountdown] = useState(3);
+  const autoRedirect = kind === "expired" || kind === "destroyed";
+
+  useEffect(() => {
+    if (!autoRedirect) return;
+    const interval = window.setInterval(() => {
+      setCountdown((current) => Math.max(1, current - 1));
+    }, 1000);
+    const redirect = window.setTimeout(() => router.replace("/"), 3000);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(redirect);
+    };
+  }, [autoRedirect, router]);
+
   const copy =
     kind === "expired"
       ? [
@@ -4992,6 +5021,25 @@ function StateScreen({
         <p>
           {copy[1]}
         </p>
+
+        {autoRedirect && (
+          <div className={redirectStyles.redirectStatus}>
+            <span aria-live="polite">
+              Redirecting to home in <b>{countdown}</b>…
+            </span>
+            <div
+              className={redirectStyles.progress}
+              role="progressbar"
+              aria-label="Redirecting to BlinkRoom home"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(((3 - countdown) / 3) * 100)}
+            >
+              <i />
+            </div>
+            <small>You will be redirected automatically.</small>
+          </div>
+        )}
 
         <Link
           href="/"
