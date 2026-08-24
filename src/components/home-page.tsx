@@ -15,6 +15,7 @@ import { clearPendingRoomCreation, preparePendingRoomCreation, retryPendingRoomC
 import { beginInstantDropTiming, markInstantDropTiming } from "@/src/lib/instant-drop-timing";
 import { PreparingRoomShell } from "@/src/components/preparing-room-shell";
 import { SecurityProcessPlayer } from "@/src/components/security-process-player";
+import { MetadataProtectionIndicator } from "@/src/components/metadata-protection-indicator";
 
 export function HomePage({ maxFileSize }: { maxFileSize: number }) {
   const router = useRouter();
@@ -242,8 +243,9 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
             </div>
           )}
         </div>
+        <MetadataProtectionIndicator detail />
         <div className="trust-row">
-          {["No account", "No app", "Temporary", "Cross-platform"].map((x) => (
+          {["No account", "No app", "Temporary", "Cross-platform", "Metadata protection"].map((x) => (
             <span key={x}>
               <Check />
               {x}

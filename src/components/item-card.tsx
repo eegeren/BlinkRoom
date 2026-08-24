@@ -10,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 import type { DecryptedItem } from "@/src/lib/types";
+import { MetadataProtectionIndicator } from "@/src/components/metadata-protection-indicator";
 const size = (n: number | null) =>
   !n
     ? ""
@@ -123,6 +124,7 @@ export function ItemCard({
         <div className="image-caption">
           <div>
             <strong>{item.fileName}</strong>
+            {item.metadataProtected && <MetadataProtectionIndicator file />}
             <span>
               {size(item.fileSize)} · {you ? "You" : item.senderName}
               {item.oneTime ? " · Open once" : ""}
@@ -143,6 +145,7 @@ export function ItemCard({
       </div>
       <div className="file-details">
         <strong>{item.fileName}</strong>
+        {item.metadataProtected && <MetadataProtectionIndicator file />}
         <span>
           {size(item.fileSize)}
           {!item.locallyAvailable || item.oneTimeStatus === "CONSUMED"

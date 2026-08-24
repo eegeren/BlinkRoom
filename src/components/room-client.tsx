@@ -51,6 +51,14 @@ import {
   importRoomKey,
   roomKeyFromFragment,
 } from "@/src/lib/crypto/room-key";
+import {
+  decryptFileMetadata,
+  deriveMetadataKey,
+  encryptFileMetadata,
+  isMetadataProtectedEnvelope,
+} from "@/src/lib/crypto/metadata";
+import { MetadataProtectionIndicator } from "@/src/components/metadata-protection-indicator";
+import { metadataProtectionCopy } from "@/src/lib/metadata-protection-copy";
 
 import { WebRTCTransport } from "@/src/lib/transport/webrtc";
 import { selectTransport } from "@/src/lib/transport/selection";
@@ -872,6 +880,9 @@ export function RoomClient({
   const keyRef =
     useRef<CryptoKey | null>(null);
 
+  const metadataKeyRef =
+    useRef<CryptoKey | null>(null);
+
   const itemsRef =
     useRef<DecryptedItem[]>([]);
 
@@ -936,6 +947,7 @@ export function RoomClient({
     setItems([]);
 
     keyRef.current = null;
+    metadataKeyRef.current = null;
     setCryptoKey(null);
 
     for (const xhr of pendingXhrs.current) {
@@ -1017,23 +1029,38 @@ export function RoomClient({
         );
       }
 
-      const secret =
-        await decryptJson<ItemSecret>(
+      const metadataKey = metadataKeyRef.current;
+      if (!metadataKey) throw new Error("Missing metadata key");
+      const metadataProtected = isMetadataProtectedEnvelope(item.encryptedMetadata);
+
+      let secret;
+      try {
+        secret = await decryptFileMetadata(
+          metadataKey,
           key,
-          parseEnvelope(
-            item.encryptedMetadata,
-          ),
+          item.encryptedMetadata,
           `${cryptoContextRef.current}:${item.id}:metadata:v1`,
         );
-
-      if (
-        !secret.fileName ||
-        !secret.mimeType ||
-        typeof secret.fileSize !== "number"
-      ) {
-        throw new Error(
-          "Invalid encrypted metadata",
-        );
+        if (
+          !secret.filename ||
+          !secret.mimeType ||
+          typeof secret.fileSize !== "number"
+        ) {
+          throw new Error("Invalid encrypted metadata");
+        }
+      } catch {
+        return {
+          ...item,
+          senderName: "Encrypted",
+          textContent: null,
+          fileName: "Encrypted file",
+          fileSize: null,
+          mimeType: "application/octet-stream",
+          metadataProtected,
+          locallyAvailable:
+            Boolean(directBlobs.current.get(item.id)) ||
+            item.availability !== "DIRECT",
+        };
       }
 
       const localEncrypted =
@@ -1044,11 +1071,12 @@ export function RoomClient({
 
       const decrypted: DecryptedItem = {
         ...item,
-        senderName: secret.senderName,
+        senderName: secret.senderName ?? "Guest",
         textContent: null,
-        fileName: secret.fileName,
+        fileName: secret.filename,
         fileSize: secret.fileSize,
         mimeType: secret.mimeType,
+        metadataProtected,
         locallyAvailable:
           Boolean(localEncrypted) || stored,
       };
@@ -1191,9 +1219,13 @@ export function RoomClient({
       setIdentity(me),
     );
 
-    importRoomKey(serialized)
-      .then((key) => {
+    Promise.all([
+      importRoomKey(serialized),
+      deriveMetadataKey(serialized),
+    ])
+      .then(([key, metadataKey]) => {
         keyRef.current = key;
+        metadataKeyRef.current = metadataKey;
         setCryptoKey(key);
       })
       .catch(() =>
@@ -1922,8 +1954,9 @@ export function RoomClient({
       prequeued = false,
     ) => {
       const key = keyRef.current;
+      const metadataKey = metadataKeyRef.current;
 
-      if (!key || !identity.id) {
+      if (!key || !metadataKey || !identity.id) {
         return;
       }
 
@@ -2007,25 +2040,24 @@ export function RoomClient({
           ? "IMAGE"
           : "FILE";
 
-        const encryptedMetadata =
-          JSON.stringify(
-            await encryptJson(
-              key,
+        let encryptedMetadata: string;
+        try {
+          encryptedMetadata = JSON.stringify(
+            await encryptFileMetadata(
+              metadataKey,
               {
-                fileName: file.name,
-
-                mimeType:
-                  file.type ||
-                  "application/octet-stream",
-
-                fileSize:
-                  file.size,
-
+                filename: file.name,
+                mimeType: file.type || "application/octet-stream",
+                lastModified: file.lastModified,
+                fileSize: file.size,
                 senderName,
               },
               `${cryptoContextRef.current}:${id}:metadata:v1`,
             ),
           );
+        } catch {
+          throw new Error(metadataProtectionCopy.uploadError);
+        }
 
         const peers =
           participantsRef.current
@@ -2870,6 +2902,7 @@ export function RoomClient({
           "Too many uploads are already in progress.",
           "Temporary storage is unavailable right now.",
           "Direct transfer unavailable.",
+          metadataProtectionCopy.uploadError,
         ].includes(message)
           ? message
           : "Couldn’t send this file. Try again.";
@@ -4577,11 +4610,10 @@ export function RoomClient({
           </button>
         </div>
 
-        <span>
-          Press Enter to share ·
-          Shift + Enter for a new
-          line
-        </span>
+        <div className="composer-meta">
+          <span className="composer-help">Press Enter to share · Shift + Enter for a new line</span>
+          <MetadataProtectionIndicator />
+        </div>
       </div>
 
       <input

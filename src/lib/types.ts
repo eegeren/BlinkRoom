@@ -37,6 +37,7 @@ export type DecryptedItem = PublicItem & {
   fileName: string | null;
   fileSize: number | null;
   mimeType: string | null;
+  metadataProtected?: boolean;
   objectUrl?: string;
   locallyAvailable?: boolean;
 };
