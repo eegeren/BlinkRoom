@@ -34,6 +34,7 @@ import { InviteModal } from "./invite-modal";
 import { ItemCard } from "./item-card";
 import { roomDurations, type RoomTtlHours } from "@/src/lib/duration";
 import { CRYPTO_VERSION } from "@/src/lib/crypto/constants";
+import { anonymousClientId } from "@/src/lib/anonymous-client";
 
 import {
   decryptFileChunks,
@@ -130,15 +131,8 @@ type StorageConfig = {
 };
 
 const getIdentity = () => {
-  let id = localStorage.getItem("blinkroom_participant");
-
-  if (!id) {
-    id = crypto.randomUUID();
-    localStorage.setItem("blinkroom_participant", id);
-  }
-
   return {
-    id,
+    id: anonymousClientId(),
     name: "Guest",
   };
 };
@@ -1232,6 +1226,8 @@ export function RoomClient({
 
     const me = getIdentity();
 
+    void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ event: "ROOM_OPENED", roomSlug: slug, clientId: me.id }) });
+
     queueMicrotask(() =>
       setIdentity(me),
     );
@@ -1250,7 +1246,7 @@ export function RoomClient({
       );
 
     return clearSecrets;
-  }, [clearSecrets]);
+  }, [clearSecrets, slug]);
 
   useEffect(() => {
     void fetch("/api/storage-config")
@@ -3318,6 +3314,8 @@ export function RoomClient({
       `download-start:${item.id}`,
     );
 
+    void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ event: "DOWNLOAD_STARTED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }) });
+
     try {
       let consumeToken:
         | string
@@ -3414,7 +3412,7 @@ export function RoomClient({
 
       void fetch("/api/analytics", {
         method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
-        body: JSON.stringify({ event: "DOWNLOAD_COMPLETED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, participantId: identity.id }),
+        body: JSON.stringify({ event: "DOWNLOAD_COMPLETED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }),
       });
 
       trackEvent(
@@ -3462,7 +3460,7 @@ export function RoomClient({
     } catch (cause) {
       void fetch("/api/analytics", {
         method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
-        body: JSON.stringify({ event: "DOWNLOAD_FAILED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, participantId: identity.id }),
+        body: JSON.stringify({ event: "DOWNLOAD_FAILED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }),
       });
       const category =
         errorCategory(cause);

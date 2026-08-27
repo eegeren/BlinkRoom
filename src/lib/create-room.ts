@@ -2,10 +2,11 @@ import type { RoomTtlHours } from "./duration";
 import { generateRoomKey, importRoomKey } from "./crypto/room-key";
 import { encryptJson } from "./crypto/payload";
 import { trackEvent } from "./analytics";
+import { anonymousClientId } from "./anonymous-client";
 
 export async function createBlinkRoom(ttlHours: RoomTtlHours) {
   const roomKey = generateRoomKey();
-  const response = await fetch("/api/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ttlHours }) });
+  const response = await fetch("/api/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ttlHours, clientId: anonymousClientId() }) });
   if (!response.ok) throw new Error("Couldn’t create your room.");
   const { slug } = await response.json() as { slug: string };
   const key = await importRoomKey(roomKey);

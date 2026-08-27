@@ -5,7 +5,7 @@ import { tokenHash } from "@/src/lib/security";
 import { roomChannel } from "@/src/server/realtime";
 import { storage } from "@/src/server/storage";
 import { acquireRoomLock } from "@/src/server/rooms";
-import { trackMetric } from "@/src/server/analytics";
+import { recordProductEvent, trackMetric } from "@/src/server/analytics";
 const completeSchema = z
   .object({
     parts: z
@@ -140,6 +140,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       };
     roomChannel.itemCreated(slug, output);
     await trackMetric("UPLOAD_COMPLETED", { bytes: Number(session.encryptedSize), durationMs: Date.now() - analyticsStartedAt });
+    await recordProductEvent({ eventType: "UPLOAD_COMPLETED", clientId: session.senderId, roomId: session.roomId, fileId: session.itemId, bytes: Number(session.encryptedSize), dedupeId: session.itemId });
     return NextResponse.json(output);
   } catch {
     await db.uploadSession.updateMany({

@@ -10,7 +10,7 @@ import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { storage } from "@/src/server/storage";
 import { validateStorageQuota } from "@/src/server/storage/quota";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
-import { trackMetric } from "@/src/server/analytics";
+import { recordProductEvent, trackMetric } from "@/src/server/analytics";
 
 export const runtime = "nodejs";
 const meta = z
@@ -252,6 +252,7 @@ export async function POST(
       };
     roomChannel.itemCreated(slug, output);
     await trackMetric("UPLOAD_COMPLETED", { bytes: upload.size, durationMs: Date.now() - analyticsStartedAt });
+    await recordProductEvent({ eventType: "UPLOAD_COMPLETED", clientId: item.senderId, roomId: item.roomId, fileId: item.id, bytes: upload.size, dedupeId: item.id });
     return NextResponse.json(output, { status: result.existing ? 200 : 201 });
   } catch (error) {
     await storage.deleteObject(upload.storageKey);

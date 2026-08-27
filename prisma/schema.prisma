@@ -234,3 +234,40 @@ model AnalyticsDownloadDedupe {
 
   @@index([expiresAt])
 }
+
+/// Versioned, privacy-safe product funnel events. Identifiers are SHA-256
+/// digests of random client/product identifiers; sensitive metadata is absent.
+model AnalyticsProductEvent {
+  id          String   @id @default(uuid())
+  eventType   String
+  occurredAt  DateTime @default(now())
+  version     Int      @default(2)
+  clientHash  String?
+  sessionHash String?
+  roomHash    String?
+  fileHash    String?
+  attemptHash String?
+  bytes       BigInt?
+  dedupeKey   String   @unique
+  @@index([occurredAt])
+  @@index([eventType, occurredAt])
+  @@index([roomHash, occurredAt])
+  @@index([fileHash, occurredAt])
+  @@index([clientHash, occurredAt])
+}
+
+model AnalyticsSuccessfulFile {
+  fileHash    String   @id
+  roomHash    String
+  completedAt DateTime @default(now())
+  @@index([completedAt])
+  @@index([roomHash, completedAt])
+}
+
+model AnalyticsDiagnosticsHourly {
+  bucketStart            DateTime @id
+  duplicateEvents        BigInt   @default(0)
+  selfDownloadsExcluded  BigInt   @default(0)
+  transferDeduplications BigInt   @default(0)
+  @@index([bucketStart])
+}
