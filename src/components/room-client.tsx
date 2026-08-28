@@ -23,6 +23,8 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { DeviceApprovalNotification } from "@/src/components/device-approval-notification";
+import { pendingDeviceRequests, type RoomDeviceSummary } from "@/src/lib/device-approval-notifications";
 
 import { brand } from "@/src/config/brand";
 import type {
@@ -745,7 +747,7 @@ export function RoomClient({
       text: string;
     }[]
   >([]);
-  const [roomDevices, setRoomDevices] = useState<Array<{ id: string; status: string; browserLabel: string; platformLabel: string }>>([]);
+  const [roomDevices, setRoomDevices] = useState<RoomDeviceSummary[]>([]);
 
   const [invite, setInvite] = useState(false);
   const [destroy, setDestroy] = useState(false);
@@ -1600,8 +1602,16 @@ export function RoomClient({
       },
     );
 
-    socket.on("device:approval-requested", () => {
-      if (isOwner) void fetch(`/api/rooms/${slug}/devices`).then((response) => response.ok ? response.json() : null).then((data) => data?.devices && setRoomDevices(data.devices));
+    socket.on("device:approval-requested", (request: { id: string; browser: string; platform: string }) => {
+      if (!isOwner) return;
+      setRoomDevices((current) => current.some((device) => device.id === request.id)
+        ? current
+        : [...current, { id: request.id, status: "PENDING", browserLabel: request.browser, platformLabel: request.platform }]);
+      void fetch(`/api/rooms/${slug}/devices`).then((response) => response.ok ? response.json() : null).then((data) => data?.devices && setRoomDevices(data.devices));
+    });
+
+    socket.on("device:decision", ({ requestId, status }: { requestId: string; status: string }) => {
+      if (isOwner) setRoomDevices((current) => current.map((device) => device.id === requestId ? { ...device, status } : device));
     });
 
     socket.on(
@@ -1796,6 +1806,7 @@ export function RoomClient({
         directOnly: boolean;
         deviceApprovalRequired?: boolean;
       }) => {
+        if (settings.deviceApprovalRequired === false) setRoomDevices([]);
         setRoom((current) =>
           current
             ? {
@@ -3861,6 +3872,7 @@ export function RoomClient({
 
   async function lockRoomAccess() {
     if (lockingRoom) return;
+    setRoomDevices([]);
     setLockingRoom(true);
     const res = await fetch(`/api/rooms/${slug}/rotate`, { method: "POST" });
     if (!res.ok) {
@@ -3995,6 +4007,8 @@ export function RoomClient({
         : current,
     );
 
+    if (setting === "deviceApprovalRequired" && !value) setRoomDevices([]);
+
     if (
       value &&
       setting ===
@@ -4036,7 +4050,10 @@ export function RoomClient({
 
   async function decideDevice(requestId: string, action: "approve" | "deny" | "revoke") {
     const response = await fetch(`/api/rooms/${slug}/devices`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId, action }) });
-    if (response.ok) await refreshDevices();
+    if (!response.ok) return false;
+    setRoomDevices((current) => current.map((device) => device.id === requestId ? { ...device, status: action === "approve" ? "APPROVED" : action === "deny" ? "DENIED" : "REVOKED" } : device));
+    void refreshDevices();
+    return true;
   }
 
   return (
@@ -4727,6 +4744,13 @@ export function RoomClient({
           <div ref={bottomRef} />
         </div>
       </section>
+
+      {isOwner && room.deviceApprovalRequired && (
+        <DeviceApprovalNotification
+          requests={pendingDeviceRequests(roomDevices, now)}
+          onDecision={(requestId, action) => decideDevice(requestId, action)}
+        />
+      )}
 
       <div className="composer">
         {copyRoomLinkPill && (

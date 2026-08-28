@@ -12,7 +12,7 @@ async function ownerRoom(req: NextRequest, slug: string) {
 export async function GET(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params, room = await ownerRoom(req, slug);
   if (!room) return NextResponse.json({ error: "Owner only" }, { status: 403 });
-  const devices = await db.roomDevice.findMany({ where: { roomId: room.id, accessVersion: room.accessVersion, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "asc" }, select: { id: true, status: true, browserLabel: true, platformLabel: true, createdAt: true, approvedAt: true } });
+  const devices = await db.roomDevice.findMany({ where: { roomId: room.id, accessVersion: room.accessVersion, expiresAt: { gt: new Date() } }, orderBy: { createdAt: "asc" }, select: { id: true, status: true, browserLabel: true, platformLabel: true, createdAt: true, approvedAt: true, expiresAt: true } });
   return NextResponse.json({ devices });
 }
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
