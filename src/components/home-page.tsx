@@ -42,7 +42,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     setFeedback(message);
     setTimeout(() => setFeedback(""), 2400);
   }
-  async function createRoom(files: File[] = []) {
+  async function createRoom(files: File[] = [], lifetime: RoomTtlHours = ttlHours) {
     if (creating.current) return;
     creating.current = true;
     setLoading(true);
@@ -50,7 +50,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     setLifetimeOpen(false);
     clearPendingRoomUpload();
     try {
-      const data = await createBlinkRoom(ttlHours, deviceApproval);
+      const data = await createBlinkRoom(lifetime, deviceApproval);
       if (files.length) setPendingRoomUpload(data.slug, files);
       router.push(`/r/${data.slug}#${data.roomKey}`);
       return;
@@ -118,6 +118,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
   function selectDuration(hours: RoomTtlHours) {
     setTtlHours(hours);
     setLifetimeOpen(false);
+    void createRoom([], hours);
   }
   function moveOption(index: number, direction: 1 | -1) {
     const next =
