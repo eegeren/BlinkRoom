@@ -4,14 +4,16 @@ import { db } from "@/src/lib/db";
 import { tokenHash } from "@/src/lib/security";
 import { acquireRoomLock } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
+import { disconnectUnapprovedRoomDevices } from "@/src/server/realtime";
 const schema = z
   .object({
     autoDestroyWhenEmpty: z.boolean().optional(),
     directOnly: z.boolean().optional(),
+    deviceApprovalRequired: z.boolean().optional(),
   })
   .strict()
   .refine(
-    (v) => v.autoDestroyWhenEmpty !== undefined || v.directOnly !== undefined,
+    (v) => v.autoDestroyWhenEmpty !== undefined || v.directOnly !== undefined || v.deviceApprovalRequired !== undefined,
   );
 export async function PATCH(
   req: NextRequest,
@@ -56,7 +58,7 @@ export async function PATCH(
     return tx.room.update({
       where: { id: room.id },
       data: input.data,
-      select: { autoDestroyWhenEmpty: true, directOnly: true },
+      select: { autoDestroyWhenEmpty: true, directOnly: true, deviceApprovalRequired: true },
     });
   });
   if ("unavailable" in result)
@@ -67,5 +69,6 @@ export async function PATCH(
       { status: 409 },
     );
   roomChannel.settingsUpdated(slug, result);
+  if (input.data.deviceApprovalRequired === true) await disconnectUnapprovedRoomDevices(slug);
   return NextResponse.json(result);
 }

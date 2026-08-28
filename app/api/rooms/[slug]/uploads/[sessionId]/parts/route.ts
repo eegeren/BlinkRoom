@@ -4,6 +4,7 @@ import { db } from "@/src/lib/db";
 import { tokenHash } from "@/src/lib/security";
 import { rateLimiter } from "@/src/server/rate-limit";
 import { storage } from "@/src/server/storage";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 const schema = z
   .object({ partNumber: z.number().int().min(1).max(10_000) })
   .strict();
@@ -31,13 +32,15 @@ export async function POST(
     return NextResponse.json({ error: "Invalid upload part" }, { status: 400 });
   const session = await db.uploadSession.findFirst({
     where: { id: sessionId, room: { slug }, status: "UPLOADING" },
-    include: { room: { select: { status: true, expiresAt: true, accessVersion: true } } },
+    include: { room: true },
   });
   if (
     !session ||
     tokenHash(req.headers.get("x-upload-token") ?? "") !==
       session.uploadTokenHash
   )
+    return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
+  if (!(await authorizeRoomDevice(req, session.room)).authorized)
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
     session.accessVersion !== session.room.accessVersion ||
@@ -72,7 +75,7 @@ export async function PATCH(
   const session = await db.uploadSession.findFirst({
     where: { id: sessionId, room: { slug }, status: "UPLOADING" },
     include: {
-      room: { select: { status: true, expiresAt: true, directOnly: true, accessVersion: true } },
+      room: true,
     },
   });
   if (
@@ -80,6 +83,8 @@ export async function PATCH(
     tokenHash(req.headers.get("x-upload-token") ?? "") !==
       session.uploadTokenHash
   )
+    return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
+  if (!(await authorizeRoomDevice(req, session.room)).authorized)
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
     session.accessVersion !== session.room.accessVersion ||

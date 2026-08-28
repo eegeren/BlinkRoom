@@ -29,11 +29,14 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
   const [instantDrop, setInstantDrop] = useState<{ files: File[]; error: boolean } | null>(null);
   const [feedback, setFeedback] = useState("");
   const [securityExpanded, setSecurityExpanded] = useState(false);
+  const [deviceApproval, setDeviceApproval] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const creating = useRef(false);
   const validatingDrop = useRef(false);
   const instantAttempt = useRef(0);
   const dragDepth = useRef(0);
   const splitRef = useRef<HTMLDivElement>(null);
+  const privacyRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   function showError(message: string) {
     setFeedback(message);
@@ -47,7 +50,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     setLifetimeOpen(false);
     clearPendingRoomUpload();
     try {
-      const data = await createBlinkRoom(ttlHours);
+      const data = await createBlinkRoom(ttlHours, deviceApproval);
       if (files.length) setPendingRoomUpload(data.slug, files);
       router.push(`/r/${data.slug}#${data.roomKey}`);
       return;
@@ -128,9 +131,14 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
     const close = (event: PointerEvent) => {
       if (!splitRef.current?.contains(event.target as Node))
         setLifetimeOpen(false);
+      if (!privacyRef.current?.contains(event.target as Node))
+        setPrivacyOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setLifetimeOpen(false);
+      if (event.key === "Escape") {
+        setLifetimeOpen(false);
+        setPrivacyOpen(false);
+      }
     };
     document.addEventListener("pointerdown", close);
     document.addEventListener("keydown", escape);
@@ -179,7 +187,7 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
           Create a temporary room and share files, text, images and links in
           real time. No account required.
         </p>
-        <div className="split-cta" ref={splitRef}>
+        <div className={`split-cta${lifetimeOpen ? " duration-open" : ""}`} ref={splitRef}>
           <button
             className="create-room-action"
             onClick={() => void createRoom()}
@@ -191,7 +199,10 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
           <button
             className="duration-trigger"
             type="button"
-            onClick={() => setLifetimeOpen((open) => !open)}
+            onClick={() => {
+              setPrivacyOpen(false);
+              setLifetimeOpen((open) => !open);
+            }}
             onKeyDown={(event) => {
               if (event.key === "ArrowDown") {
                 event.preventDefault();
@@ -245,6 +256,31 @@ export function HomePage({ maxFileSize }: { maxFileSize: number }) {
           )}
         </div>
         <MetadataProtectionIndicator detail />
+        <div className="privacy-options" ref={privacyRef}>
+          <button
+            type="button"
+            className="privacy-options-trigger"
+            aria-haspopup="dialog"
+            aria-expanded={privacyOpen}
+            aria-controls="privacy-options-popover"
+            onClick={() => {
+              setLifetimeOpen(false);
+              setPrivacyOpen((open) => !open);
+            }}
+          >
+            Privacy options
+            <ChevronDown aria-hidden="true" />
+          </button>
+          {privacyOpen && (
+            <div id="privacy-options-popover" className="privacy-options-popover" role="dialog" aria-label="Privacy options">
+              <strong>Privacy options</strong>
+              <label className="privacy-option-row">
+                <span>Device Approval<small>Approve new devices before they enter.</small></span>
+                <input type="checkbox" checked={deviceApproval} onChange={(event) => setDeviceApproval(event.target.checked)} />
+              </label>
+            </div>
+          )}
+        </div>
         <div className="trust-row">
           {["No account", "No app", "Temporary", "Cross-platform", "Metadata protection"].map((x) => (
             <span key={x}>

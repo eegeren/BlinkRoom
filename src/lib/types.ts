@@ -6,6 +6,7 @@ export type EncryptedEnvelope = {
   ciphertext: string;
 };
 export type ItemAvailability = "DIRECT" | "STORED" | "HYBRID";
+export type AccessMode = "STANDARD" | "VIEW_ONCE" | "BURN_AFTER_DOWNLOAD";
 export type PublicItem = {
   id: string;
   senderId: string;
@@ -16,6 +17,7 @@ export type PublicItem = {
   encryptedSize: number | null;
   availability: ItemAvailability;
   oneTime: boolean;
+  accessMode: AccessMode;
   oneTimeStatus: "AVAILABLE" | "RESERVED" | "CONSUMED";
   createdAt: string;
 };
@@ -29,6 +31,7 @@ export type PublicRoom = {
   encryptionVersion: number;
   autoDestroyWhenEmpty: boolean;
   directOnly: boolean;
+  deviceApprovalRequired: boolean;
   items: PublicItem[];
 };
 export type DecryptedItem = PublicItem & {

@@ -6,11 +6,14 @@ import { roomChannel } from "@/src/server/realtime";
 import { roomDurationSchema } from "@/src/lib/duration";
 import { cleanupRoomStorage } from "@/src/server/storage/cleanup";
 import { trackMetric } from "@/src/server/analytics";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 
 type Ctx = { params: Promise<{ slug: string }> };
-export async function GET(_: NextRequest, { params }: Ctx) {
+export async function GET(req: NextRequest, { params }: Ctx) {
   const { slug } = await params; const room = await refreshRoomStatus(slug);
   if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  const access = await authorizeRoomDevice(req, room);
+  if (!access.authorized) return NextResponse.json({ approvalRequired: true, status: "PENDING" }, { status: 202, headers: { "Cache-Control": "no-store" } });
   return NextResponse.json(publicRoom(room));
 }
 export async function PATCH(req: NextRequest, { params }: Ctx) {

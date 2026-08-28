@@ -47,6 +47,20 @@ enum OneTimeStatus {
   CONSUMED
 }
 
+enum AccessMode {
+  STANDARD
+  VIEW_ONCE
+  BURN_AFTER_DOWNLOAD
+}
+
+enum DeviceApprovalStatus {
+  PENDING
+  APPROVED
+  DENIED
+  REVOKED
+  EXPIRED
+}
+
 model Room {
   id             String      @id @default(uuid())
   slug           String      @unique
@@ -66,11 +80,35 @@ model Room {
   autoDestroyWhenEmpty Boolean @default(false)
   autoDestroyEmptySince DateTime?
   directOnly     Boolean      @default(false)
+  deviceApprovalRequired Boolean @default(false)
   items          RoomItem[]
   uploadSessions UploadSession[]
   presences      RoomPresence[]
+  devices        RoomDevice[]
   @@index([status, expiresAt])
   @@index([status, cleanupStatus])
+}
+
+model RoomDevice {
+  id               String               @id @default(uuid())
+  roomId           String
+  room             Room                 @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  deviceIdHash     String
+  sessionTokenHash String?
+  accessVersion    Int
+  status           DeviceApprovalStatus @default(PENDING)
+  browserLabel     String
+  platformLabel    String
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+  approvedAt       DateTime?
+  deniedAt         DateTime?
+  revokedAt        DateTime?
+  expiresAt        DateTime
+
+  @@unique([roomId, deviceIdHash])
+  @@index([roomId, status])
+  @@index([status, expiresAt])
 }
 
 model RoomPresence {
@@ -102,6 +140,7 @@ model UploadSession {
   encryptedSize     BigInt
   directDelivered   Boolean      @default(false)
   oneTime            Boolean      @default(false)
+  accessMode         AccessMode   @default(STANDARD)
   fileFingerprint    String?
   partSize           Int          @default(10485760)
   totalParts         Int          @default(0)
@@ -141,6 +180,7 @@ model RoomItem {
   storageKey        String?
   availability      ItemAvailability @default(STORED)
   oneTime           Boolean @default(false)
+  accessMode        AccessMode @default(STANDARD)
   oneTimeStatus     OneTimeStatus @default(AVAILABLE)
   consumeTokenHash  String?
   consumeReservedAt DateTime?

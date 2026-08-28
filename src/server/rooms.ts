@@ -46,6 +46,7 @@ export const publicRoom = (
   encryptionVersion: room.encryptionVersion,
   autoDestroyWhenEmpty: room.autoDestroyWhenEmpty,
   directOnly: room.directOnly,
+  deviceApprovalRequired: room.deviceApprovalRequired,
   items:
     room.status === "ACTIVE"
       ? room.items.map((i) => ({
@@ -58,6 +59,7 @@ export const publicRoom = (
           encryptedSize: i.encryptedSize,
           availability: i.availability,
           oneTime: i.oneTime,
+          accessMode: i.accessMode,
           oneTimeStatus: i.oneTimeStatus,
           createdAt: i.createdAt.toISOString(),
         }))

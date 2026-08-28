@@ -16,6 +16,7 @@ import {
   storageObjectKey,
   validateStorageQuota,
 } from "@/src/server/storage/quota";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 
 const envelope = z
   .string()
@@ -44,6 +45,7 @@ const schema = z
     encryptedSize: z.number().int().positive(),
     directDelivered: z.boolean().default(false),
     oneTime: z.boolean().default(false),
+    accessMode: z.enum(["STANDARD", "VIEW_ONCE", "BURN_AFTER_DOWNLOAD"]).default("STANDARD"),
     fileFingerprint: z.string().regex(/^[a-f0-9]{64}$/).default("0".repeat(64)),
     partSize: z
       .number()
@@ -55,8 +57,8 @@ const schema = z
   .strict();
 type UploadInput = Omit<
   z.infer<typeof schema>,
-  "oneTime" | "fileFingerprint" | "partSize"
-> & { oneTime?: boolean; fileFingerprint?: string; partSize?: number };
+  "oneTime" | "accessMode" | "fileFingerprint" | "partSize"
+> & { oneTime?: boolean; accessMode?: "STANDARD" | "VIEW_ONCE" | "BURN_AFTER_DOWNLOAD"; fileFingerprint?: string; partSize?: number };
 type RoomSnapshot = NonNullable<Awaited<ReturnType<typeof refreshRoomStatus>>>;
 type ReservedSession = {
   id: string;
@@ -103,7 +105,8 @@ export async function reserveUploadSession(
   storageKey: string,
   uploadToken: string,
 ): Promise<ReservedSession> {
-  const oneTime = input.oneTime ?? false,
+  const accessMode = input.accessMode ?? (input.oneTime ? "BURN_AFTER_DOWNLOAD" : "STANDARD"),
+    oneTime = accessMode !== "STANDARD",
     fileFingerprint = input.fileFingerprint ?? null,
     partSize = input.partSize ?? 10 * 1024 * 1024;
   return db.$transaction(async (tx) => {
@@ -196,6 +199,7 @@ export async function reserveUploadSession(
           encryptedSize: BigInt(input.encryptedSize),
           directDelivered: input.directDelivered,
           oneTime,
+          accessMode,
           fileFingerprint,
           partSize,
           totalParts: Math.ceil(input.encryptedSize / partSize),
@@ -224,6 +228,7 @@ export async function reserveUploadSession(
         encryptedSize: BigInt(input.encryptedSize),
         directDelivered: input.directDelivered,
         oneTime,
+        accessMode,
         fileFingerprint,
         partSize,
         totalParts: Math.ceil(input.encryptedSize / partSize),
@@ -315,6 +320,8 @@ export function createUploadsPost(
     const room = await dependencies.getRoom(slug);
     if (!room || room.status !== "ACTIVE")
       return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
+    if (room.deviceApprovalRequired && !(await authorizeRoomDevice(req, room)).authorized)
+      return NextResponse.json({ error: "Room unavailable" }, { status: 403 });
     if (room.directOnly)
       return NextResponse.json(
         { error: "Storage uploads are disabled for this room" },

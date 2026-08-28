@@ -6,11 +6,18 @@ import { ownerToken, tokenHash } from "@/src/lib/security";
 import { acquireRoomLock } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
 import { storage } from "@/src/server/storage";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("reserve") }).strict(),
   z
     .object({
       action: z.literal("complete"),
+      consumeToken: z.string().min(32).max(256),
+    })
+    .strict(),
+  z
+    .object({
+      action: z.literal("release"),
       consumeToken: z.string().min(32).max(256),
     })
     .strict(),
@@ -28,9 +35,11 @@ export async function POST(
     );
   const item = await db.roomItem.findFirst({
     where: { id: itemId, room: { slug } },
-    include: { room: { select: { id: true, status: true, expiresAt: true } } },
+    include: { room: { select: { id: true, slug: true, ownerTokenHash: true, deviceApprovalRequired: true, accessVersion: true, status: true, expiresAt: true } } },
   });
-  if (!item || !item.oneTime)
+  if (item && !(await authorizeRoomDevice(req, item.room)).authorized)
+    return NextResponse.json({ error: "File unavailable" }, { status: 404 });
+  if (!item || (!item.oneTime && item.accessMode === "STANDARD"))
     return NextResponse.json({ error: "File unavailable" }, { status: 404 });
   if (input.data.action === "reserve") {
     const token = ownerToken(),
@@ -71,6 +80,23 @@ export async function POST(
         })
       : NextResponse.json({ error: "No longer available" }, { status: 409 });
   }
+  if (input.data.action === "release") {
+    const released = await db.roomItem.updateMany({
+      where: {
+        id: item.id,
+        oneTimeStatus: "RESERVED",
+        consumeTokenHash: tokenHash(input.data.consumeToken),
+      },
+      data: {
+        oneTimeStatus: "AVAILABLE",
+        consumeTokenHash: null,
+        consumeReservedAt: null,
+      },
+    });
+    return released.count === 1
+      ? NextResponse.json({ ok: true })
+      : NextResponse.json({ error: "No longer available" }, { status: 409 });
+  }
   const consumeToken = input.data.consumeToken;
   const consumed = await db.$transaction(async (tx) => {
     await acquireRoomLock(tx, item.roomId);
@@ -78,7 +104,7 @@ export async function POST(
     const changed = await tx.roomItem.updateMany({
       where: {
         id: item.id,
-        oneTime: true,
+        accessMode: { not: "STANDARD" },
         oneTimeStatus: "RESERVED",
         consumeTokenHash: tokenHash(consumeToken),
         consumeReservedAt: {
@@ -100,7 +126,7 @@ export async function POST(
   roomChannel.itemConsumed(slug, item.id);
   if (item.storageKey)
     queueMicrotask(
-      () => void storage.deleteObject(item.storageKey!).catch(() => undefined),
+      () => void storage.deleteObject(item.storageKey!).catch((error) => console.error("destructive_cleanup_failed", { name: error instanceof Error ? error.name : "Unknown" })),
     );
   return NextResponse.json({ ok: true });
 }

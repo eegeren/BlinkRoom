@@ -6,6 +6,7 @@ import { roomChannel } from "@/src/server/realtime";
 import { storage } from "@/src/server/storage";
 import { acquireRoomLock } from "@/src/server/rooms";
 import { recordProductEvent, trackMetric } from "@/src/server/analytics";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 const completeSchema = z
   .object({
     parts: z
@@ -40,6 +41,8 @@ export async function POST(req: NextRequest, { params }: Ctx) {
     tokenHash(req.headers.get("x-upload-token") ?? "") !==
       session.uploadTokenHash
   )
+    return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
+  if (!(await authorizeRoomDevice(req, session.room)).authorized)
     return NextResponse.json({ error: "Upload unavailable" }, { status: 403 });
   if (
     session.accessVersion !== session.room.accessVersion ||
@@ -102,6 +105,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
             storageKey: session.storageKey,
             availability: session.directDelivered ? "HYBRID" : "STORED",
             oneTime: session.oneTime,
+            accessMode: session.accessMode,
           },
         });
         await tx.uploadSession.update({
@@ -135,6 +139,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         encryptedSize: item.encryptedSize,
         availability: item.availability,
         oneTime: item.oneTime,
+        accessMode: item.accessMode,
         oneTimeStatus: item.oneTimeStatus,
         createdAt: item.createdAt.toISOString(),
       };

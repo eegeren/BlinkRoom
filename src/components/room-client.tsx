@@ -8,10 +8,12 @@ import { io } from "socket.io-client";
 import {
   ArrowUp,
   Check,
+  ChevronRight,
   ChevronUp,
   Download,
   FileUp,
   Image as ImageIcon,
+  Link2,
   LockKeyhole,
   MoreHorizontal,
   Paperclip,
@@ -28,6 +30,7 @@ import type {
   ItemType,
   PublicItem,
   PublicRoom,
+  AccessMode,
 } from "@/src/lib/types";
 
 import { InviteModal } from "./invite-modal";
@@ -178,6 +181,7 @@ async function uploadMultipartStorage(input: {
   encrypted: Blob;
   directDelivered: boolean;
   oneTime: boolean;
+  accessMode: AccessMode;
   fileFingerprint: string;
   signal: AbortSignal;
   onProgress: (value: number) => void;
@@ -198,6 +202,7 @@ async function uploadMultipartStorage(input: {
         encryptedSize: input.encrypted.size,
         directDelivered: input.directDelivered,
         oneTime: input.oneTime,
+        accessMode: input.accessMode,
         fileFingerprint: input.fileFingerprint,
         partSize: 10 * 1024 * 1024,
       }),
@@ -443,6 +448,7 @@ async function uploadStreamingStorage(input: {
   onEncrypt: (value: number) => void;
   onUpload: (value: number) => void;
   oneTime: boolean;
+  accessMode: AccessMode;
 }) {
   const size = encryptedFileSize(input.file.size);
 
@@ -466,6 +472,7 @@ async function uploadStreamingStorage(input: {
         encryptedSize: size,
         directDelivered: false,
         oneTime: input.oneTime,
+        accessMode: input.accessMode,
         fileFingerprint: fingerprint,
         partSize: input.partSize,
       }),
@@ -723,6 +730,7 @@ export function RoomClient({
     useState<CryptoKey | null>(null);
 
   const [error, setError] = useState("");
+  const [deviceGate, setDeviceGate] = useState<"" | "waiting" | "denied" | "revoked">("");
 
   const [status, setStatus] = useState<
     "connecting" | "connected" | "offline"
@@ -737,6 +745,7 @@ export function RoomClient({
       text: string;
     }[]
   >([]);
+  const [roomDevices, setRoomDevices] = useState<Array<{ id: string; status: string; browserLabel: string; platformLabel: string }>>([]);
 
   const [invite, setInvite] = useState(false);
   const [destroy, setDestroy] = useState(false);
@@ -744,8 +753,9 @@ export function RoomClient({
   const [lockingRoom, setLockingRoom] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [sheetClosing, setSheetClosing] = useState(false);
-  const [oneTimeNext, setOneTimeNext] =
-    useState(false);
+  const [filePrivacyMenu, setFilePrivacyMenu] = useState(false);
+  const [accessModeNext, setAccessModeNext] =
+    useState<AccessMode>("STANDARD");
 
   const [menu, setMenu] = useState(false);
   const [menuClosing, setMenuClosing] = useState(false);
@@ -762,6 +772,9 @@ export function RoomClient({
   const [uploads, setUploads] = useState<
     Upload[]
   >([]);
+  const [copyRoomLinkPill, setCopyRoomLinkPill] = useState<
+    "visible" | "copied" | "closing" | null
+  >(null);
 
   const [dragging, setDragging] =
     useState(false);
@@ -776,6 +789,39 @@ export function RoomClient({
   const menuCloseTimer = useRef<number | null>(null);
   const sheetCloseTimer = useRef<number | null>(null);
   const lifetimeCloseTimer = useRef<number | null>(null);
+  const copyRoomLinkDismissTimer = useRef<number | null>(null);
+  const copyRoomLinkUnmountTimer = useRef<number | null>(null);
+
+  const clearCopyRoomLinkTimers = useCallback(() => {
+    if (copyRoomLinkDismissTimer.current !== null) {
+      window.clearTimeout(copyRoomLinkDismissTimer.current);
+      copyRoomLinkDismissTimer.current = null;
+    }
+    if (copyRoomLinkUnmountTimer.current !== null) {
+      window.clearTimeout(copyRoomLinkUnmountTimer.current);
+      copyRoomLinkUnmountTimer.current = null;
+    }
+  }, []);
+
+  const dismissCopyRoomLinkPill = useCallback(() => {
+    clearCopyRoomLinkTimers();
+    setCopyRoomLinkPill("closing");
+    copyRoomLinkUnmountTimer.current = window.setTimeout(() => {
+      setCopyRoomLinkPill(null);
+      copyRoomLinkUnmountTimer.current = null;
+    }, 200);
+  }, [clearCopyRoomLinkTimers]);
+
+  const showCopyRoomLinkPill = useCallback(() => {
+    clearCopyRoomLinkTimers();
+    setCopyRoomLinkPill("visible");
+    copyRoomLinkDismissTimer.current = window.setTimeout(
+      dismissCopyRoomLinkPill,
+      5000,
+    );
+  }, [clearCopyRoomLinkTimers, dismissCopyRoomLinkPill]);
+
+  useEffect(() => clearCopyRoomLinkTimers, [clearCopyRoomLinkTimers]);
 
   const closeMenu = useCallback(() => {
     if (!menu || menuClosing) return;
@@ -794,6 +840,7 @@ export function RoomClient({
     sheetCloseTimer.current = window.setTimeout(() => {
       setSheet(false);
       setSheetClosing(false);
+      setFilePrivacyMenu(false);
     }, delay);
   }, [sheet, sheetClosing]);
 
@@ -861,6 +908,10 @@ export function RoomClient({
     };
     const dismissOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      if (filePrivacyMenu) {
+        setFilePrivacyMenu(false);
+        return;
+      }
       closeMenu();
       closeSheet();
       closeLifetime();
@@ -871,7 +922,7 @@ export function RoomClient({
       document.removeEventListener("pointerdown", dismissOnPointerDown, true);
       document.removeEventListener("keydown", dismissOnEscape);
     };
-  }, [closeLifetime, closeMenu, closeSheet, lifetime, menu, sheet]);
+  }, [closeLifetime, closeMenu, closeSheet, filePrivacyMenu, lifetime, menu, sheet]);
 
   useEffect(() => () => {
     if (menuCloseTimer.current !== null) window.clearTimeout(menuCloseTimer.current);
@@ -1134,6 +1185,17 @@ export function RoomClient({
         `/api/rooms/${slug}`,
       );
 
+      if (res.status === 202) {
+        setRoom(null);
+        replaceItems([]);
+        directBlobs.current.clear();
+        transportRef.current?.close();
+        const requested = await fetch(`/api/rooms/${slug}/devices/request`, { method: "POST" });
+        const state = requested.ok ? (await requested.json()) as { status: string } : null;
+        setDeviceGate(state?.status === "DENIED" ? "denied" : "waiting");
+        return;
+      }
+
       if (!res.ok) {
         setError(
           res.status === 404
@@ -1196,6 +1258,7 @@ export function RoomClient({
           );
 
         setRoom(data);
+        setDeviceGate("");
         replaceItems(decrypted);
       } catch {
         setKeyError("unlock");
@@ -1209,6 +1272,19 @@ export function RoomClient({
       slug,
     ],
   );
+
+  useEffect(() => {
+    if (isOwner || deviceGate !== "waiting" || !cryptoKey) return;
+    const poll = window.setInterval(() => {
+      void fetch(`/api/rooms/${slug}/devices/status`, { cache: "no-store" }).then(async (response) => {
+        const data = await response.json().catch(() => null) as { status?: string } | null;
+        if (data?.status === "APPROVED") void sync(cryptoKey);
+        else if (data?.status === "DENIED") setDeviceGate("denied");
+        else if (data?.status === "REVOKED") { clearSecrets(); setDeviceGate("revoked"); }
+      });
+    }, 2000);
+    return () => window.clearInterval(poll);
+  }, [clearSecrets, cryptoKey, deviceGate, isOwner, slug, sync]);
 
   useEffect(() => {
     const serialized =
@@ -1479,6 +1555,8 @@ export function RoomClient({
     socket.on(
       "disconnect",
       () => {
+        transportRef.current?.close();
+        transportRef.current = null;
         setStatus(
           navigator.onLine
             ? "connecting"
@@ -1521,6 +1599,10 @@ export function RoomClient({
         ]);
       },
     );
+
+    socket.on("device:approval-requested", () => {
+      if (isOwner) void fetch(`/api/rooms/${slug}/devices`).then((response) => response.ok ? response.json() : null).then((data) => data?.devices && setRoomDevices(data.devices));
+    });
 
     socket.on(
       "item:create",
@@ -1712,6 +1794,7 @@ export function RoomClient({
       (settings: {
         autoDestroyWhenEmpty: boolean;
         directOnly: boolean;
+        deviceApprovalRequired?: boolean;
       }) => {
         setRoom((current) =>
           current
@@ -1959,7 +2042,7 @@ export function RoomClient({
     async (
       file: File,
       existingId?: string,
-      oneTime = false,
+      accessMode: AccessMode = "STANDARD",
       resumeSource:
         | "manual"
         | "reconnect"
@@ -1967,6 +2050,7 @@ export function RoomClient({
       prequeued = false,
     ) => {
       const key = keyRef.current;
+      const oneTime = accessMode !== "STANDARD";
       const metadataKey = metadataKeyRef.current;
 
       if (!key || !metadataKey || !identity.id) {
@@ -2088,6 +2172,7 @@ export function RoomClient({
           transportConfig.current;
 
         const direct =
+          !oneTime &&
           config &&
           transportRef.current &&
           selectTransport(
@@ -2119,6 +2204,8 @@ export function RoomClient({
         const trackCompleted = (
           transport: Transport,
         ) => {
+          showCopyRoomLinkPill();
+
           trackEvent(
             "file_upload_completed",
             {
@@ -2289,6 +2376,7 @@ export function RoomClient({
             },
 
             oneTime,
+            accessMode,
           });
 
           setUploads((current) =>
@@ -2429,6 +2517,7 @@ export function RoomClient({
                           encryptedFile.size,
 
                         oneTime,
+                        accessMode,
                       },
                     ),
 
@@ -2531,6 +2620,7 @@ export function RoomClient({
               delivered > 0,
 
             oneTime,
+            accessMode,
 
             fileFingerprint:
               await fileFingerprint(
@@ -2629,6 +2719,8 @@ export function RoomClient({
             ? "true"
             : "false",
         );
+
+        form.append("accessMode", accessMode);
 
         form.append(
           "file",
@@ -2951,6 +3043,7 @@ export function RoomClient({
       identity.id,
       room,
       senderName,
+      showCopyRoomLinkPill,
       slug,
     ],
   );
@@ -2959,10 +3052,9 @@ export function RoomClient({
     async (
       files: FileList | File[],
     ) => {
-      const oneTime =
-        oneTimeNext;
+      const accessMode = accessModeNext;
 
-      setOneTimeNext(false);
+      setAccessModeNext("STANDARD");
 
       const queue = createQueuedUploads(files);
 
@@ -2997,7 +3089,7 @@ export function RoomClient({
             await uploadOne(
               upload.file,
               upload.id,
-              oneTime,
+              accessMode,
               "manual",
               true,
             );
@@ -3008,7 +3100,7 @@ export function RoomClient({
       await Promise.all(workers);
     },
     [
-      oneTimeNext,
+      accessModeNext,
       uploadOne,
     ],
   );
@@ -3054,7 +3146,7 @@ export function RoomClient({
           void uploadOne(
             upload.file,
             upload.id,
-            false,
+            "STANDARD",
             "reconnect",
           );
         }
@@ -3216,6 +3308,10 @@ export function RoomClient({
     );
   }
 
+  if (deviceGate) {
+    return <main className="state-screen"><Link className="wordmark" href="/">{brand.name}<i /></Link><div><span className="state-icon"><LockKeyhole /></span><h1>{deviceGate === "waiting" ? "Waiting for approval" : deviceGate === "denied" ? "Access denied" : "Access revoked"}</h1><p>{deviceGate === "waiting" ? "The room owner needs to approve this device before you can enter." : "This device cannot access the room."}</p></div></main>;
+  }
+
   if (!room) {
     if (instantPendingFiles.length) return <PreparingRoomShell files={instantPendingFiles} error={false} onRetry={() => undefined} onBack={() => undefined} />;
     return (
@@ -3249,6 +3345,16 @@ export function RoomClient({
     "undefined"
       ? window.location.href
       : "";
+
+  async function copyCanonicalRoomLink() {
+    await navigator.clipboard.writeText(roomUrl);
+    clearCopyRoomLinkTimers();
+    setCopyRoomLinkPill("copied");
+    copyRoomLinkDismissTimer.current = window.setTimeout(
+      dismissCopyRoomLinkPill,
+      1000,
+    );
+  }
 
   const downloadableFiles =
     items.filter(
@@ -3316,10 +3422,8 @@ export function RoomClient({
 
     void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ event: "DOWNLOAD_STARTED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }) });
 
+    let consumeToken: string | undefined;
     try {
-      let consumeToken:
-        | string
-        | undefined;
 
       if (item.oneTime) {
         const reserved =
@@ -3458,6 +3562,13 @@ export function RoomClient({
         1000,
       );
     } catch (cause) {
+      if (consumeToken) {
+        void fetch(`/api/rooms/${slug}/items/${item.id}/consume`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "release", consumeToken }),
+        });
+      }
       void fetch("/api/analytics", {
         method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
         body: JSON.stringify({ event: "DOWNLOAD_FAILED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }),
@@ -3825,7 +3936,8 @@ export function RoomClient({
   async function updateSetting(
     setting:
       | "autoDestroyWhenEmpty"
-      | "directOnly",
+      | "directOnly"
+      | "deviceApprovalRequired",
     value: boolean,
   ) {
     const res = await fetch(
@@ -3871,6 +3983,7 @@ export function RoomClient({
         autoDestroyWhenEmpty:
           boolean;
         directOnly: boolean;
+        deviceApprovalRequired: boolean;
       };
 
     setRoom((current) =>
@@ -3914,6 +4027,16 @@ export function RoomClient({
       () => setFeedback(""),
       1600,
     );
+  }
+
+  async function refreshDevices() {
+    const response = await fetch(`/api/rooms/${slug}/devices`, { cache: "no-store" });
+    if (response.ok) setRoomDevices(((await response.json()) as { devices: typeof roomDevices }).devices);
+  }
+
+  async function decideDevice(requestId: string, action: "approve" | "deny" | "revoke") {
+    const response = await fetch(`/api/rooms/${slug}/devices`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId, action }) });
+    if (response.ok) await refreshDevices();
   }
 
   return (
@@ -4206,6 +4329,26 @@ export function RoomClient({
                             : "Off"}
                         </b>
                       </button>
+
+                      <button
+                        className="setting-option"
+                        onClick={() => void updateSetting("deviceApprovalRequired", !room.deviceApprovalRequired)}
+                      >
+                        <span>Device Approval<small>Require approval before new devices enter.</small></span>
+                        <b>{room.deviceApprovalRequired ? "On" : "Off"}</b>
+                      </button>
+
+                      {room.deviceApprovalRequired && (
+                        <div className="setting-option" onClick={() => void refreshDevices()}>
+                          <span>Devices<small>{roomDevices.length ? `${roomDevices.length} request${roomDevices.length === 1 ? "" : "s"}` : "Tap to refresh"}</small></span>
+                        </div>
+                      )}
+                      {roomDevices.map((device) => (
+                        <div className="setting-option" key={device.id}>
+                          <span>{device.browserLabel} · {device.platformLabel}<small>{device.status}</small></span>
+                          {device.status === "PENDING" ? <b><button onClick={() => void decideDevice(device.id, "deny")}>Deny</button><button onClick={() => void decideDevice(device.id, "approve")}>Approve</button></b> : device.status === "APPROVED" ? <button onClick={() => void decideDevice(device.id, "revoke")}>Revoke</button> : null}
+                        </div>
+                      ))}
 
                       <button
                         className="setting-option"
@@ -4586,6 +4729,22 @@ export function RoomClient({
       </section>
 
       <div className="composer">
+        {copyRoomLinkPill && (
+          <div
+            className={`copy-room-link-slot${copyRoomLinkPill === "closing" ? " closing" : ""}`}
+          >
+            <button
+              className="copy-room-link-pill"
+              type="button"
+              aria-label={copyRoomLinkPill === "copied" ? "Copied" : "Copy room link"}
+              onClick={() => void copyCanonicalRoomLink()}
+              disabled={copyRoomLinkPill === "copied" || copyRoomLinkPill === "closing"}
+            >
+              {copyRoomLinkPill === "copied" ? <Check aria-hidden="true" /> : <Link2 aria-hidden="true" />}
+              <span>{copyRoomLinkPill === "copied" ? "Copied" : "Copy room link"}</span>
+            </button>
+          </div>
+        )}
         <div className="composer-inner">
           <button
             className="add-button"
@@ -4594,6 +4753,7 @@ export function RoomClient({
               if (sheet) closeSheet();
               else {
                 setSheetClosing(false);
+                setFilePrivacyMenu(false);
                 setSheet(true);
               }
             }}
@@ -4720,36 +4880,50 @@ export function RoomClient({
               Add to room
             </h3>
 
-            <button
-              className="one-time-option"
-              aria-pressed={
-                oneTimeNext
-              }
-              onClick={() =>
-                setOneTimeNext(
-                  (value) =>
-                    !value,
-                )
-              }
-            >
-              <span>
-                Open once
+            {!filePrivacyMenu ? (
+              <button
+                className="one-time-option"
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                onClick={() => setFilePrivacyMenu(true)}
+              >
+                <span>File privacy</span>
+                <b>
+                  {accessModeNext === "STANDARD"
+                    ? "Standard"
+                    : accessModeNext === "VIEW_ONCE"
+                      ? "View once"
+                      : "Burn after download"}
+                  <ChevronRight aria-hidden="true" />
+                </b>
+              </button>
+            ) : (
+              <div className="file-privacy-submenu" role="menu" aria-label="File privacy">
+                <div className="file-privacy-submenu-title">File privacy</div>
+                {([
+                  ["STANDARD", "Standard"],
+                  ["VIEW_ONCE", "View once"],
+                  ["BURN_AFTER_DOWNLOAD", "Burn after download"],
+                ] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={accessModeNext === mode}
+                    onClick={() => {
+                      setAccessModeNext(mode);
+                      setFilePrivacyMenu(false);
+                    }}
+                  >
+                    {accessModeNext === mode && <Check aria-hidden="true" />}
+                    <span>{label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
-                <small>
-                  Unavailable after
-                  one successful
-                  download.
-                </small>
-              </span>
-
-              <b>
-                {oneTimeNext
-                  ? "On"
-                  : "Off"}
-              </b>
-            </button>
-
-            <div className="sheet-options">
+            {!filePrivacyMenu && <div className="sheet-options">
               <button
                 onClick={() => {
                   fileRef.current?.click();
@@ -4775,7 +4949,7 @@ export function RoomClient({
                   Choose photo
                 </span>
               </button>
-            </div>
+            </div>}
 
             <button
               className="sheet-close"

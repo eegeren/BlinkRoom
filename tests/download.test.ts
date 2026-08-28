@@ -32,6 +32,24 @@ test("R2 download requires a completed matching upload session", async () => {
   assert.equal((await call(get)).status, 404);
 });
 
+test("destructive R2 downloads never expose a replayable signed URL", async () => {
+  let signed = false;
+  const destructive = { ...record(), oneTime: true, accessMode: "VIEW_ONCE" as const, oneTimeStatus: "RESERVED" as const, consumeTokenHash: "invalid", consumeReservedAt: new Date() };
+  const get = createDownloadGet({ storageKind: "r2", checkRateLimit: () => true, findItem: async () => destructive, createUrl: async () => { signed = true; return "https://signed.invalid"; } });
+  assert.equal((await call(get)).status, 404);
+  assert.equal(signed, false);
+});
+
+test("device-approved R2 rooms use the revocable content proxy instead of signed URLs", async () => {
+  let signed = false;
+  const approved = { ...record(), room: { ...record().room, deviceApprovalRequired: true } };
+  const get = createDownloadGet({ storageKind: "r2", checkRateLimit: () => true, findItem: async () => approved, createUrl: async () => { signed = true; return "https://signed.invalid"; }, authorizeDevice: async () => true });
+  const response = await call(get), payload = await response.json() as { url: string };
+  assert.equal(response.status, 200);
+  assert.equal(payload.url, "/api/rooms/ROOM-CODE/items/item-id/content");
+  assert.equal(signed, false);
+});
+
 test("expired and destroyed rooms cannot obtain signed URLs", async () => {
   for (const status of ["EXPIRED", "DESTROYED"] as const) {
     let signed = false;

@@ -36,6 +36,10 @@ export async function POST(req: NextRequest, { params }: Ctx) {
       select: { slug: true, expiresAt: true, accessVersion: true },
     });
     await tx.roomPresence.deleteMany({ where: { roomId: room.id, isOwner: false } });
+    await tx.roomDevice.updateMany({
+      where: { roomId: room.id, status: { in: ["PENDING", "APPROVED"] } },
+      data: { status: "REVOKED", sessionTokenHash: null, revokedAt: new Date() },
+    });
     await tx.uploadSession.updateMany({
       where: { roomId: room.id, status: { in: ["PENDING", "UPLOADING", "FAILED"] } },
       data: { status: "ABORTED" },

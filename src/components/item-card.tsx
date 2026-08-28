@@ -145,8 +145,10 @@ export function ItemCard({
           {fileKind(item)} · {size(item.fileSize)} · {when}
           {!item.locallyAvailable || item.oneTimeStatus === "CONSUMED"
             ? " · No longer available"
-            : item.oneTime
-              ? " · Open once"
+            : item.accessMode === "VIEW_ONCE"
+              ? " · 👁 View once"
+              : item.accessMode === "BURN_AFTER_DOWNLOAD" || item.oneTime
+                ? " · 🔥 Burns after download"
               : ""}
         </span>
       </div>
@@ -155,7 +157,7 @@ export function ItemCard({
       </div>
       {item.locallyAvailable && item.oneTimeStatus !== "CONSUMED" && (
         <button className={`item-download ${styles.download}`} onClick={onDownload}>
-          <span>{item.oneTime ? "Open once" : "Download"}</span> <ArrowDown />
+          <span>{item.accessMode === "VIEW_ONCE" ? "View once" : item.oneTime ? "Download once" : "Download"}</span> <ArrowDown />
         </button>
       )}
       {you && (

@@ -67,6 +67,13 @@ export function HowToUsePage() {
           <div>
             <p className="seo-eyebrow">QUICK START</p>
             <h2 id="guide-quick-start">From home to shared.</h2>
+            <p className="guide-flow" aria-label="Create, then share, optionally approve, transfer and disappear">
+              <span>Create</span><i aria-hidden="true">→</i>
+              <span>Share</span><i aria-hidden="true">→</i>
+              <span>Approve <small>optional</small></span><i aria-hidden="true">→</i>
+              <span>Transfer</span><i aria-hidden="true">→</i>
+              <span>Disappear</span>
+            </p>
           </div>
           <ol>
             <li><span>01</span><h3>Create or drop</h3><p>Open a room with Create a Room, or drop files on the homepage for the instant flow.</p></li>
@@ -111,11 +118,13 @@ export function HowToUsePage() {
           <div>
             <GuideRows rows={[
               { label: "Room lifetime", text: "Changes when the active room expires. Only the room owner can update it." },
+              { label: "Approve new devices", text: "Turn on Device Approval when creating a room to control who gets in. New devices wait for your approval before they can access the room." },
               { label: "Destroy when everyone leaves", text: "Destroys the room shortly after the last participant leaves. Turn it on for a room that should end with the session." },
               { label: "Direct transfers only", text: "Keeps new files out of temporary storage and transfers them only between connected peers. It cannot be enabled while stored files or stored uploads remain." },
               { label: "Open once", text: "Applies to the next file or photo you add. After one successful download, that item becomes unavailable." },
               { label: "Destroy room", text: "Ends access to the entire room immediately. This owner action cannot be undone; physical storage cleanup follows asynchronously." },
             ]} />
+            <p className="guide-note">Device Approval is optional. When enabled, a room link alone does not grant room-content access. The owner can Approve or Deny a new device, Revoke it later, or use Emergency Lock to immediately invalidate existing non-owner access.</p>
           </div>
         </section>
 

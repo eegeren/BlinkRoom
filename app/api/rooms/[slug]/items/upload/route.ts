@@ -11,6 +11,7 @@ import { storage } from "@/src/server/storage";
 import { validateStorageQuota } from "@/src/server/storage/quota";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
 import { recordProductEvent, trackMetric } from "@/src/server/analytics";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 
 export const runtime = "nodejs";
 const meta = z
@@ -21,6 +22,7 @@ const meta = z
     encryptionVersion: z.coerce.number().pipe(z.literal(1)),
     encryptedMetadata: z.string().min(40).max(100_000),
     directDelivered: z.enum(["true", "false"]).optional().default("false"),
+    accessMode: z.enum(["STANDARD", "VIEW_ONCE", "BURN_AFTER_DOWNLOAD"]).optional().default("STANDARD"),
   })
   .strict();
 type ParsedUpload = {
@@ -44,7 +46,7 @@ async function parseUpload(
   const maxEncryptedBytes = maxEncryptedFileBytes();
   const parser = Busboy({
     headers: Object.fromEntries(req.headers),
-    limits: { files: 1, fields: 8, fileSize: maxEncryptedBytes },
+    limits: { files: 1, fields: 9, fileSize: maxEncryptedBytes },
   });
   parser.on("field", (name, value) => {
     fields[name] = value;
@@ -97,6 +99,8 @@ export async function POST(
   const initialRoom = await refreshRoomStatus(slug);
   if (!initialRoom || initialRoom.status !== "ACTIVE")
     return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
+  if (!(await authorizeRoomDevice(req, initialRoom)).authorized)
+    return NextResponse.json({ error: "Room unavailable" }, { status: 403 });
   if (initialRoom.directOnly)
     return NextResponse.json(
       { error: "Storage uploads are disabled for this room" },
@@ -203,6 +207,8 @@ export async function POST(
                 parsed.data.directDelivered === "true"
                   ? "HYBRID"
                   : "STORED",
+              oneTime: parsed.data.accessMode !== "STANDARD",
+              accessMode: parsed.data.accessMode,
             },
           })
         : await tx.roomItem.create({
@@ -217,6 +223,8 @@ export async function POST(
               storageKey: upload.storageKey,
               availability:
                 parsed.data.directDelivered === "true" ? "HYBRID" : "STORED",
+              oneTime: parsed.data.accessMode !== "STANDARD",
+              accessMode: parsed.data.accessMode,
             },
           });
       return { item, existing: Boolean(existing) };

@@ -6,6 +6,7 @@ import { canRelaySignal } from "./signaling-policy";
 import { env } from "@/src/lib/env";
 import { cleanupRoomStorage } from "./storage/cleanup";
 import { tokenHash } from "@/src/lib/security";
+import { authorizeRoomDevice } from "./device-approval";
 
 type Presence = Map<string, { name: string; sockets: Set<string> }>;
 const rooms = new Map<string, Presence>();
@@ -69,13 +70,15 @@ export function registerRealtime(io: Server) {
           return;
         const active = await db.room.findUnique({
           where: { slug },
-          select: { id: true, ownerTokenHash: true, status: true, expiresAt: true },
+          select: { id: true, slug: true, ownerTokenHash: true, status: true, expiresAt: true, accessVersion: true, deviceApprovalRequired: true },
         });
         if (
           !active ||
           !canRelaySignal(slug, slug, active.status, active.expiresAt)
         )
           return;
+        const deviceAccess = await authorizeRoomDevice(new Request("http://localhost", { headers: { cookie: socket.handshake.headers.cookie ?? "" } }), active);
+        if (!deviceAccess.authorized) return;
         const ownerCookie = cookieValue(socket.handshake.headers.cookie, `blinkroom_owner_${slug}`);
         const isOwner = Boolean(ownerCookie && tokenHash(ownerCookie) === active.ownerTokenHash);
         await db.$transaction([
@@ -336,11 +339,20 @@ export const roomChannel = {
       .emit("room:expiration-updated", { expiresAt }),
   settingsUpdated: (
     slug: string,
-    settings: { autoDestroyWhenEmpty: boolean; directOnly: boolean },
+    settings: { autoDestroyWhenEmpty: boolean; directOnly: boolean; deviceApprovalRequired?: boolean },
   ) =>
     realtimeGlobal.blinkRoomIo
       ?.to(slug)
       .emit("room:settings-updated", settings),
   itemConsumed: (slug: string, id: string) =>
     realtimeGlobal.blinkRoomIo?.to(slug).emit("item:consumed", { id }),
+  deviceApprovalRequested: (slug: string, request: unknown) =>
+    realtimeGlobal.blinkRoomIo?.to(slug).emit("device:approval-requested", request),
+  deviceDecision: (slug: string, requestId: string, status: string) =>
+    realtimeGlobal.blinkRoomIo?.to(slug).emit("device:decision", { requestId, status }),
 };
+
+export async function disconnectUnapprovedRoomDevices(slug: string) {
+  const sockets = await realtimeGlobal.blinkRoomIo?.in(slug).fetchSockets();
+  for (const socket of sockets ?? []) if (!socket.data.isOwner) socket.disconnect(true);
+}

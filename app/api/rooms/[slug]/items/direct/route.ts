@@ -4,6 +4,7 @@ import { db } from "@/src/lib/db";
 import { rateLimiter } from "@/src/server/rate-limit";
 import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 
 const envelope = z
   .string()
@@ -31,6 +32,7 @@ const schema = z
     encryptedMetadata: envelope,
     encryptedSize: z.number().int().positive(),
     oneTime: z.boolean().default(false),
+    accessMode: z.enum(["STANDARD", "VIEW_ONCE", "BURN_AFTER_DOWNLOAD"]).default("STANDARD"),
   })
   .strict();
 export async function POST(
@@ -46,6 +48,8 @@ export async function POST(
   const room = await refreshRoomStatus(slug);
   if (!room || room.status !== "ACTIVE")
     return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
+  if (!(await authorizeRoomDevice(req, room)).authorized)
+    return NextResponse.json({ error: "Room unavailable" }, { status: 403 });
   const item = await db.$transaction(async (tx) => {
     await acquireRoomLock(tx, room.id);
     const active = await tx.room.findUnique({
@@ -64,7 +68,8 @@ export async function POST(
         encryptionVersion: 1,
         encryptedSize: input.data.encryptedSize,
         availability: "DIRECT",
-        oneTime: input.data.oneTime,
+        oneTime: input.data.accessMode !== "STANDARD" || input.data.oneTime,
+        accessMode: input.data.accessMode !== "STANDARD" ? input.data.accessMode : input.data.oneTime ? "BURN_AFTER_DOWNLOAD" : "STANDARD",
       },
     });
   });
@@ -80,6 +85,7 @@ export async function POST(
     encryptedSize: item.encryptedSize,
     availability: item.availability,
     oneTime: item.oneTime,
+    accessMode: item.accessMode,
     oneTimeStatus: item.oneTimeStatus,
     createdAt: item.createdAt.toISOString(),
   };

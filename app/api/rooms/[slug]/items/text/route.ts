@@ -4,6 +4,7 @@ import { db } from "@/src/lib/db";
 import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
 import { rateLimiter } from "@/src/server/rate-limit";
+import { authorizeRoomDevice } from "@/src/server/device-approval";
 
 const envelope = z.string().min(40).max(100_000).refine((value) => { try { const item = JSON.parse(value) as Record<string, unknown>; return item.version === 1 && item.algorithm === "AES-GCM" && typeof item.iv === "string" && typeof item.ciphertext === "string"; } catch { return false; } }, "Invalid encrypted payload");
 const input = z.object({ itemId: z.string().uuid(), senderId: z.string().uuid(), type: z.enum(["TEXT", "LINK"]), encryptionVersion: z.literal(1), encryptedPayload: envelope }).strict();
@@ -12,8 +13,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ slu
   if (!parsed.success) return NextResponse.json({ error: "Invalid encrypted item" }, { status: 400 });
   if (!rateLimiter.check(`item:${parsed.data.senderId}`, 40, 60_000)) return NextResponse.json({ error: "Slow down" }, { status: 429 });
   const room = await refreshRoomStatus(slug); if (!room || room.status !== "ACTIVE") return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
+  if (!(await authorizeRoomDevice(req, room)).authorized) return NextResponse.json({ error: "Room unavailable" }, { status: 403 });
   const item = await db.$transaction(async (tx) => { await acquireRoomLock(tx, room.id); const active = await tx.room.findUnique({ where: { id: room.id }, select: { status: true, expiresAt: true } }); if (!active || active.status !== "ACTIVE" || active.expiresAt <= new Date()) return null; return tx.roomItem.create({ data: { id: parsed.data.itemId, roomId: room.id, senderId: parsed.data.senderId, type: parsed.data.type, encryptedPayload: parsed.data.encryptedPayload, encryptionVersion: parsed.data.encryptionVersion, encryptedSize: Buffer.byteLength(parsed.data.encryptedPayload) } }); });
   if (!item) return NextResponse.json({ error: "Room unavailable" }, { status: 410 });
-  const output = { id: item.id, senderId: item.senderId, type: item.type, encryptedPayload: item.encryptedPayload, encryptedMetadata: item.encryptedMetadata, encryptionVersion: item.encryptionVersion, encryptedSize: item.encryptedSize, availability: item.availability, createdAt: item.createdAt.toISOString() };
+  const output = { id: item.id, senderId: item.senderId, type: item.type, encryptedPayload: item.encryptedPayload, encryptedMetadata: item.encryptedMetadata, encryptionVersion: item.encryptionVersion, encryptedSize: item.encryptedSize, availability: item.availability, oneTime: item.oneTime, accessMode: item.accessMode, oneTimeStatus: item.oneTimeStatus, createdAt: item.createdAt.toISOString() };
   roomChannel.itemCreated(slug, output); return NextResponse.json(output, { status: 201 });
 }

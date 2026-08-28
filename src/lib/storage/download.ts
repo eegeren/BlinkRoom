@@ -29,7 +29,10 @@ export async function fetchEncryptedFile(
     fetcher,
     consumeToken,
   );
-  const response = await fetcher(source, { cache: "no-store" });
+  const response = await fetcher(source, {
+    cache: "no-store",
+    headers: consumeToken ? { "x-consume-token": consumeToken } : undefined,
+  });
   if (!response.ok) throw new Error("Encrypted file unavailable");
   return response.blob();
 }
