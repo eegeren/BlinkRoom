@@ -1,6 +1,7 @@
 import { db } from "@/src/lib/db";
 import { roomChannel } from "./realtime";
 import { storage } from "./storage";
+import { toJsonBytes } from "./storage/quota";
 import type { Prisma } from "@prisma/client";
 
 export async function acquireRoomLock(
@@ -56,7 +57,7 @@ export const publicRoom = (
           encryptedPayload: i.encryptedPayload,
           encryptedMetadata: i.encryptedMetadata,
           encryptionVersion: i.encryptionVersion,
-          encryptedSize: i.encryptedSize,
+          encryptedSize: toJsonBytes(i.encryptedSize),
           availability: i.availability,
           oneTime: i.oneTime,
           accessMode: i.accessMode,

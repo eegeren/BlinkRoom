@@ -22,7 +22,7 @@ type DownloadRecord = {
     status: "PENDING" | "UPLOADING" | "COMPLETED" | "ABORTED" | "FAILED";
     storageKey: string;
   } | null;
-  encryptedSize?: number | null;
+  encryptedSize?: bigint | null;
 };
 type Dependencies = {
   storageKind: "local" | "r2";

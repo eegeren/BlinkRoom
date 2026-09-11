@@ -4,6 +4,7 @@ import { db } from "@/src/lib/db";
 import { tokenHash } from "@/src/lib/security";
 import { roomChannel } from "@/src/server/realtime";
 import { storage } from "@/src/server/storage";
+import { toJsonBytes } from "@/src/server/storage/quota";
 import { acquireRoomLock } from "@/src/server/rooms";
 import { recordProductEvent, trackMetric } from "@/src/server/analytics";
 import { authorizeRoomDevice } from "@/src/server/device-approval";
@@ -136,7 +137,7 @@ export async function POST(req: NextRequest, { params }: Ctx) {
         encryptedPayload: null,
         encryptedMetadata: item.encryptedMetadata,
         encryptionVersion: item.encryptionVersion,
-        encryptedSize: item.encryptedSize,
+        encryptedSize: toJsonBytes(item.encryptedSize),
         availability: item.availability,
         oneTime: item.oneTime,
         accessMode: item.accessMode,

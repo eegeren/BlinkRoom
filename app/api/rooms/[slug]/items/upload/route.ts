@@ -3,13 +3,14 @@ import { Readable, Transform } from "node:stream";
 import Busboy from "busboy";
 import { z } from "zod";
 import { db } from "@/src/lib/db";
-import { env } from "@/src/lib/env";
+import { env, maxFileSizeBytes } from "@/src/lib/env";
 import { rateLimiter } from "@/src/server/rate-limit";
 import { roomChannel } from "@/src/server/realtime";
 import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { storage } from "@/src/server/storage";
-import { validateStorageQuota } from "@/src/server/storage/quota";
+import { toJsonBytes, validateStorageQuota } from "@/src/server/storage/quota";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
+import { maxFileSizeMessage } from "@/src/lib/upload-validation";
 import { recordProductEvent, trackMetric } from "@/src/server/analytics";
 import { authorizeRoomDevice } from "@/src/server/device-approval";
 
@@ -31,8 +32,7 @@ type ParsedUpload = {
   storageKey: string;
   truncated: boolean;
 };
-const maxEncryptedFileBytes = () =>
-  encryptedFileSize(env.MAX_FILE_SIZE_MB * 1024 * 1024);
+const maxEncryptedFileBytes = () => encryptedFileSize(maxFileSizeBytes);
 async function parseUpload(
   req: NextRequest,
   slug: string,
@@ -173,7 +173,7 @@ export async function POST(
         storedBytes: Number(stored._sum.encryptedSize ?? 0),
         storedItems: itemCount,
         pendingUploads: 0,
-        maxFileBytes: env.MAX_FILE_SIZE_MB * 1024 * 1024 + 2 * 1024 * 1024,
+        maxFileBytes: encryptedFileSize(maxFileSizeBytes),
         maxRoomBytes: env.MAX_ROOM_STORAGE_MB * 1024 * 1024,
         maxItems: env.MAX_ROOM_ITEMS,
         maxConcurrent: env.MAX_CONCURRENT_UPLOADS,
@@ -240,7 +240,7 @@ export async function POST(
         return NextResponse.json({ error: "Item conflict" }, { status: 409 });
       const message =
         result.error === "FILE_TOO_LARGE"
-          ? "This file is too large."
+          ? maxFileSizeMessage(maxFileSizeBytes)
           : result.error === "ROOM_STORAGE_LIMIT"
             ? "This room has reached its temporary storage limit."
             : "This room has reached its item limit.";
@@ -254,7 +254,7 @@ export async function POST(
         encryptedPayload: item.encryptedPayload,
         encryptedMetadata: item.encryptedMetadata,
         encryptionVersion: item.encryptionVersion,
-        encryptedSize: item.encryptedSize,
+        encryptedSize: toJsonBytes(item.encryptedSize),
         availability: item.availability,
         createdAt: item.createdAt.toISOString(),
       };

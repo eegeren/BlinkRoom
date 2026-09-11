@@ -72,7 +72,7 @@ export async function recordDownload(input: { eventType: "DOWNLOAD_STARTED" | "D
     if (!item) return;
     const roomHash = digest(item.roomId), fileHash = digest(item.id), clientHash = digest(input.clientId), attemptHash = digest(input.actionId);
     const dedupeKey = productEventDedupeKey(input.eventType, input.actionId);
-    const inserted = await tx.$executeRaw`INSERT INTO "AnalyticsProductEvent" ("id", "eventType", "occurredAt", "version", "clientHash", "roomHash", "fileHash", "attemptHash", "bytes", "dedupeKey") VALUES (${randomUUID()}, ${input.eventType}, ${now}, 2, ${clientHash}, ${roomHash}, ${fileHash}, ${attemptHash}, ${input.eventType === "DOWNLOAD_COMPLETED" ? BigInt(Math.max(0, item.encryptedSize ?? 0)) : null}, ${dedupeKey}) ON CONFLICT ("dedupeKey") DO NOTHING`;
+    const inserted = await tx.$executeRaw`INSERT INTO "AnalyticsProductEvent" ("id", "eventType", "occurredAt", "version", "clientHash", "roomHash", "fileHash", "attemptHash", "bytes", "dedupeKey") VALUES (${randomUUID()}, ${input.eventType}, ${now}, 2, ${clientHash}, ${roomHash}, ${fileHash}, ${attemptHash}, ${input.eventType === "DOWNLOAD_COMPLETED" ? BigInt(Math.max(0, Number(item.encryptedSize ?? 0))) : null}, ${dedupeKey}) ON CONFLICT ("dedupeKey") DO NOTHING`;
     if (inserted !== 1) { await diagnostic("duplicateEvents", now, tx); return; }
     if (input.eventType !== "DOWNLOAD_COMPLETED") return;
     if (!isCrossClientTransfer(item.senderId, input.clientId)) { await diagnostic("selfDownloadsExcluded", now, tx); return; }
@@ -114,7 +114,7 @@ export async function trackDownloadAction(input: { successful: boolean; actionId
     }
     const item = await tx.roomItem.findFirst({ where: { id: input.itemId, room: { slug: input.roomSlug } }, select: { roomId: true, senderId: true, encryptedSize: true } });
     if (!item) return;
-    const bytes = BigInt(Math.max(0, item.encryptedSize ?? 0)), duration = BigInt(Math.max(0, Math.trunc(input.durationMs ?? 0))), bucketStart = hourStart(now);
+    const bytes = BigInt(Math.max(0, Number(item.encryptedSize ?? 0))), duration = BigInt(Math.max(0, Math.trunc(input.durationMs ?? 0))), bucketStart = hourStart(now);
     await tx.analyticsHourly.upsert({ where: { bucketStart }, create: { bucketStart, filesDownloaded: ONE, downloadBytes: bytes, downloadDurationMs: duration }, update: { filesDownloaded: { increment: ONE }, downloadBytes: { increment: bytes }, downloadDurationMs: { increment: duration } } });
     await tx.analyticsRecentEvent.create({ data: { event: "File Downloaded", createdAt: now } });
     if (item.senderId !== input.participantId) {

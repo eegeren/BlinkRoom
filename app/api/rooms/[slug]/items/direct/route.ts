@@ -5,6 +5,7 @@ import { rateLimiter } from "@/src/server/rate-limit";
 import { acquireRoomLock, refreshRoomStatus } from "@/src/server/rooms";
 import { roomChannel } from "@/src/server/realtime";
 import { authorizeRoomDevice } from "@/src/server/device-approval";
+import { toJsonBytes } from "@/src/server/storage/quota";
 
 const envelope = z
   .string()
@@ -82,7 +83,7 @@ export async function POST(
     encryptedPayload: null,
     encryptedMetadata: item.encryptedMetadata,
     encryptionVersion: item.encryptionVersion,
-    encryptedSize: item.encryptedSize,
+    encryptedSize: toJsonBytes(item.encryptedSize),
     availability: item.availability,
     oneTime: item.oneTime,
     accessMode: item.accessMode,

@@ -1,5 +1,13 @@
 import { z } from "zod";
 
+/**
+ * Single source of truth for the upload size cap. Deployments may lower this
+ * via MAX_FILE_SIZE_MB but can never raise it past 5 GB — never trust a
+ * client-supplied size, this constant is what server-side validation enforces.
+ */
+export const MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024;
+const MAX_FILE_SIZE_MB_CEILING = MAX_FILE_SIZE / (1024 * 1024);
+
 const optionalTrimmed = z.preprocess(
   (value) =>
     typeof value === "string" && value.trim() === ""
@@ -23,7 +31,11 @@ const provider = z.preprocess(
   z.enum(["local", "r2"]).default("local"),
 );
 const storageFields = {
-  MAX_FILE_SIZE_MB: z.coerce.number().positive().max(10240).default(10240),
+  MAX_FILE_SIZE_MB: z.coerce
+    .number()
+    .positive()
+    .max(MAX_FILE_SIZE_MB_CEILING)
+    .default(MAX_FILE_SIZE_MB_CEILING),
   MAX_ROOM_STORAGE_MB: z.coerce.number().positive().max(102400).default(20480),
   STORAGE_PROVIDER: provider,
   LOCAL_STORAGE_PATH: z.string().default("./storage"),
@@ -116,6 +128,8 @@ export function resolveStorageRuntimeConfig(source: Record<string, unknown>) {
 }
 export const env = schema.parse(process.env);
 assertR2Credentials(env);
+/** Effective upload size cap in bytes for this deployment (never above MAX_FILE_SIZE). */
+export const maxFileSizeBytes = env.MAX_FILE_SIZE_MB * 1024 * 1024;
 export function requireR2Config(config: StorageEnv = env) {
   assertR2Credentials(config);
   if (config.STORAGE_PROVIDER !== "r2")

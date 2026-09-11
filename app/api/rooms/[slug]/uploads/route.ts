@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/src/lib/db";
-import { env } from "@/src/lib/env";
+import { env, maxFileSizeBytes } from "@/src/lib/env";
 import { encryptedFileSize } from "@/src/lib/crypto/file";
+import { maxFileSizeMessage } from "@/src/lib/upload-validation";
 import {
   ephemeralRequestKey,
   ownerToken,
@@ -68,7 +69,7 @@ type ReservedSession = {
   replacedMultipart?: { storageKey: string; uploadId: string };
 };
 const messages = {
-  FILE_TOO_LARGE: "This file is too large.",
+  FILE_TOO_LARGE: maxFileSizeMessage(maxFileSizeBytes),
   ROOM_STORAGE_LIMIT: "This room has reached its temporary storage limit.",
   ROOM_ITEM_LIMIT: "This room has reached its item limit.",
   TOO_MANY_UPLOADS: "Too many uploads are already in progress.",
@@ -178,7 +179,7 @@ export async function reserveUploadSession(
         Number(pending._sum.encryptedSize ?? BigInt(0)),
       storedItems: itemCount,
       pendingUploads: pending._count,
-      maxFileBytes: encryptedFileSize(env.MAX_FILE_SIZE_MB * 1024 * 1024),
+      maxFileBytes: encryptedFileSize(maxFileSizeBytes),
       maxRoomBytes: env.MAX_ROOM_STORAGE_MB * 1024 * 1024,
       maxItems: env.MAX_ROOM_ITEMS,
       maxConcurrent: env.MAX_CONCURRENT_UPLOADS,

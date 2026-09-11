@@ -5260,12 +5260,14 @@ function StateScreen({
 }
 
 function formatSize(n: number) {
-  return n >= 1048576
-    ? `${(n / 1048576).toFixed(1)} MB`
-    : `${Math.max(
-        1,
-        Math.ceil(n / 1024),
-      )} KB`;
+  return n >= 1024 ** 3
+    ? `${(n / 1024 ** 3).toFixed(1)} GB`
+    : n >= 1048576
+      ? `${(n / 1048576).toFixed(1)} MB`
+      : `${Math.max(
+          1,
+          Math.ceil(n / 1024),
+        )} KB`;
 }
 
 function formatRemaining(

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { clearPendingRoomUpload, peekPendingRoomUpload, setPendingRoomUpload, takePendingRoomUpload } from "../src/lib/pending-room-upload";
-import { uploadBatchValidationError, uploadValidationError } from "../src/lib/upload-validation";
+import { maxFileSizeMessage, uploadBatchValidationError, uploadValidationError } from "../src/lib/upload-validation";
 import { filesFromDropSnapshot } from "../src/lib/drop-files";
 import { createQueuedUploads } from "../src/lib/upload-queue";
 import { clearPendingRoomCreation, getPendingRoomCreation, preparePendingRoomCreation, startPendingRoomCreation } from "../src/lib/pending-room-creation";
@@ -23,7 +23,7 @@ test("instant-drop handoff cannot leak files into a different room", () => {
 
 test("landing and room uploads share the same maximum file-size validation", () => {
   assert.equal(uploadValidationError(new File(["ok"], "ok.txt"), 10), null);
-  assert.equal(uploadValidationError(new File(["too large"], "large.txt"), 2), "This file is too large.");
+  assert.equal(uploadValidationError(new File(["too large"], "large.txt"), 2), maxFileSizeMessage(2));
 });
 
 test("zero-byte files use the shared known validation message", () => {

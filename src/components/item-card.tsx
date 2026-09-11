@@ -18,9 +18,11 @@ import styles from "./item-card.module.css";
 const size = (n: number | null) =>
   !n
     ? ""
-    : n >= 1048576
-      ? `${(n / 1048576).toFixed(1)} MB`
-      : `${Math.max(1, Math.ceil(n / 1024))} KB`;
+    : n >= 1024 ** 3
+      ? `${(n / 1024 ** 3).toFixed(1)} GB`
+      : n >= 1048576
+        ? `${(n / 1048576).toFixed(1)} MB`
+        : `${Math.max(1, Math.ceil(n / 1024))} KB`;
 const looksLikeCode = (value: string) =>
   value.includes("\n") ||
   /^(?:npm|pnpm|yarn|git|curl|const|let|function|SELECT|docker)\b/.test(value);

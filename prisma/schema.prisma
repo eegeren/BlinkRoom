@@ -176,7 +176,7 @@ model RoomItem {
   encryptedPayload  String?
   encryptedMetadata String?
   encryptionVersion Int      @default(1)
-  encryptedSize     Int?
+  encryptedSize     BigInt?
   storageKey        String?
   availability      ItemAvailability @default(STORED)
   oneTime           Boolean @default(false)
