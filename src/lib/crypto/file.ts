@@ -129,3 +129,60 @@ export async function decryptFileChunks(
     throw new Error("Encrypted file length mismatch");
   return new Blob(parts, { type: mimeType });
 }
+
+// Read only one authenticated record at a time, even when network frames split it.
+export async function decryptFileStream(
+  key: CryptoKey,
+  stream: ReadableStream<Uint8Array>,
+  room: string,
+  item: string,
+  write: (chunk: Uint8Array) => Promise<void>,
+  onProgress?: (bytes: number) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  let pending: Uint8Array = new Uint8Array(0);
+  let position = 0, written = 0;
+  const read = async (size: number): Promise<Uint8Array<ArrayBuffer>> => {
+    const output = new Uint8Array(size);
+    let offset = 0;
+    while (offset < size) {
+      if (position === pending.length) {
+        const next = await reader.read();
+        if (next.done) throw new Error("Encrypted file truncated");
+        pending = next.value;
+        position = 0;
+      }
+      const take = Math.min(size - offset, pending.length - position);
+      output.set(pending.subarray(position, position + take), offset);
+      position += take;
+      offset += take;
+    }
+    return output;
+  };
+  try {
+    const header = await read(12);
+    const view = new DataView(header.buffer);
+    const count = view.getUint32(8);
+    if (!FILE_MAGIC.every((byte, index) => header[index] === byte) ||
+        view.getUint32(4) !== FILE_CHUNK_BYTES || count > 100000)
+      throw new Error("Invalid encrypted file header");
+    for (let index = 0; index < count; index++) {
+      const iv = await read(GCM_IV_BYTES);
+      const length = new DataView((await read(4)).buffer).getUint32(0);
+      if (length < 16 || length > FILE_CHUNK_BYTES + 16)
+        throw new Error("Invalid encrypted chunk length");
+      const ciphertext = await read(length);
+      const plain = new Uint8Array(await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv, additionalData: aad(room, item, index) }, key, ciphertext,
+      ));
+      await write(plain);
+      written += plain.length;
+      onProgress?.(written);
+    }
+    if (position !== pending.length || !(await reader.read()).done)
+      throw new Error("Encrypted file length mismatch");
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+}

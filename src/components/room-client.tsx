@@ -43,6 +43,7 @@ import { anonymousClientId } from "@/src/lib/anonymous-client";
 
 import {
   decryptFileChunks,
+  decryptFileStream,
   encryptedFileSize,
   encryptFileChunks,
   encryptFileMultipart,
@@ -69,7 +70,7 @@ import { metadataProtectionCopy } from "@/src/lib/metadata-protection-copy";
 
 import { WebRTCTransport } from "@/src/lib/transport/webrtc";
 import { selectTransport } from "@/src/lib/transport/selection";
-import { fetchEncryptedFile } from "@/src/lib/storage/download";
+import { fetchEncryptedFile, fetchEncryptedFileStream } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
 import { peekPendingRoomUpload, takePendingRoomUpload } from "@/src/lib/pending-room-upload";
 import { uploadValidationError } from "@/src/lib/upload-validation";
@@ -766,6 +767,7 @@ export function RoomClient({
   const [lifetimeClosing, setLifetimeClosing] = useState(false);
 
   const [feedback, setFeedback] = useState("");
+  const activeDownloads = useRef(new Set<string>());
   const securityFeedbackRef = useRef(false);
   const [downloadingAll, setDownloadingAll] =
     useState(false);
@@ -3399,6 +3401,7 @@ export function RoomClient({
   async function downloadItem(
     item: DecryptedItem,
   ) {
+    if (activeDownloads.current.has(item.id)) return;
     const analyticsActionId = crypto.randomUUID();
     const key = keyRef.current;
 
@@ -3434,7 +3437,16 @@ export function RoomClient({
     void fetch("/api/analytics", { method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true, body: JSON.stringify({ event: "DOWNLOAD_STARTED", actionId: analyticsActionId, roomSlug: slug, itemId: item.id, clientId: identity.id }) });
 
     let consumeToken: string | undefined;
+    let writable: { write: (chunk: Uint8Array) => Promise<void>; close: () => Promise<void>; abort: () => Promise<void> } | undefined;
+    activeDownloads.current.add(item.id);
     try {
+      // Open the picker during the click's user activation, before network awaits.
+      const picker = (window as Window & { showSaveFilePicker?: (options: { suggestedName: string }) => Promise<{ createWritable: () => Promise<NonNullable<typeof writable>> }> }).showSaveFilePicker;
+      if (picker && (item.fileSize ?? 0) >= 64 * 1024 * 1024) {
+        const handle = await picker.call(window, { suggestedName: item.fileName });
+        writable = await handle.createWritable();
+      }
+      setFeedback("Downloading… 0%");
 
       if (item.oneTime) {
         const reserved =
@@ -3469,39 +3481,30 @@ export function RoomClient({
         ).consumeToken;
       }
 
-      const encrypted =
-        directBlobs.current.get(
-          item.id,
-        ) ??
-        (await fetchEncryptedFile(
-          slug,
-          item.id,
-          fetch,
-          consumeToken,
-        ));
-
-      const blob =
-        await decryptFileChunks(
-          key,
-          encrypted,
-          cryptoContextRef.current,
-          item.id,
-          item.mimeType,
-        );
-
-      const url =
-        URL.createObjectURL(blob);
-
-      const anchor =
-        document.createElement(
-          "a",
-        );
-
-      anchor.href = url;
-      anchor.download =
-        item.fileName;
-
-      anchor.click();
+      const local = directBlobs.current.get(item.id);
+      const stream = local?.stream() ?? await fetchEncryptedFileStream(slug, item.id, fetch, consumeToken);
+      const parts: BlobPart[] = [];
+      await decryptFileStream(key, stream, cryptoContextRef.current, item.id,
+        async (chunk) => {
+          if (writable) await writable.write(chunk);
+          else parts.push(new Uint8Array(chunk));
+        },
+        (bytes) => setFeedback(`Downloading… ${Math.min(100, Math.round(bytes / Math.max(1, item.fileSize ?? bytes) * 100))}%`),
+      );
+      if (writable) {
+        await writable.close();
+        writable = undefined;
+      } else {
+        const url = URL.createObjectURL(new Blob(parts, { type: item.mimeType }));
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = item.fileName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      }
+      setFeedback("Download complete.");
 
       if (consumeToken) {
         await fetch(
@@ -3565,20 +3568,18 @@ export function RoomClient({
         );
       }
 
-      setTimeout(
-        () =>
-          URL.revokeObjectURL(
-            url,
-          ),
-        1000,
-      );
     } catch (cause) {
+      await writable?.abort().catch(() => undefined);
       if (consumeToken) {
         void fetch(`/api/rooms/${slug}/items/${item.id}/consume`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "release", consumeToken }),
         });
+      }
+      if (cause instanceof DOMException && cause.name === "AbortError") {
+        setFeedback("");
+        return;
       }
       void fetch("/api/analytics", {
         method: "POST", headers: { "Content-Type": "application/json" }, keepalive: true,
@@ -3602,13 +3603,15 @@ export function RoomClient({
         item.availability ===
           "DIRECT"
           ? "No longer available."
-          : "Unable to decrypt file.",
+          : "Download failed. Please try again.",
       );
 
       setTimeout(
         () => setFeedback(""),
         1600,
       );
+    } finally {
+      activeDownloads.current.delete(item.id);
     }
   }
 

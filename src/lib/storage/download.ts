@@ -17,7 +17,7 @@ export async function getEncryptedFileSource(
   if (!payload.url) throw new Error("Encrypted file unavailable");
   return payload.url;
 }
-export async function fetchEncryptedFile(
+export async function fetchEncryptedFileStream(
   slug: string,
   itemId: string,
   fetcher: Fetcher = fetch,
@@ -34,5 +34,15 @@ export async function fetchEncryptedFile(
     headers: consumeToken ? { "x-consume-token": consumeToken } : undefined,
   });
   if (!response.ok) throw new Error("Encrypted file unavailable");
-  return response.blob();
+  if (!response.body) throw new Error("Encrypted file unavailable");
+  return response.body;
+}
+
+export async function fetchEncryptedFile(
+  slug: string,
+  itemId: string,
+  fetcher: Fetcher = fetch,
+  consumeToken?: string,
+) {
+  return new Response(await fetchEncryptedFileStream(slug, itemId, fetcher, consumeToken)).blob();
 }
