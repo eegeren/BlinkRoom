@@ -6,7 +6,7 @@ import { encryptJson, decryptJson } from "../src/lib/crypto/payload";
 import { generateRoomKey, importRoomKey, roomKeyFromFragment } from "../src/lib/crypto/room-key";
 import { asArrayBuffer } from "../src/lib/crypto/encoding";
 
-test("room key generation and serialization round-trip", async () => { const serialized = generateRoomKey(); assert.match(serialized, /^[A-Za-z0-9_-]{43}$/); const key = await importRoomKey(serialized); assert.equal(key.algorithm.name, "AES-GCM"); });
+test("room key generation and serialization round-trip", async () => { const serialized = generateRoomKey(); assert.match(serialized, /^s1\.[A-Za-z0-9_-]{22}$/); const key = await importRoomKey(serialized); assert.equal(key.algorithm.name, "AES-GCM"); });
 test("text encrypts and decrypts", async () => { const key = await importRoomKey(generateRoomKey()); const envelope = await encryptJson(key, { content: "secret message" }, "room:item:content:v1"); assert.equal((await decryptJson<{content:string}>(key, envelope, "room:item:content:v1")).content, "secret message"); assert.ok(!JSON.stringify(envelope).includes("secret message")); });
 test("wrong key fails authentication", async () => { const a = await importRoomKey(generateRoomKey()), b = await importRoomKey(generateRoomKey()); const envelope = await encryptJson(a, { content: "secret" }, "aad"); await assert.rejects(() => decryptJson(b, envelope, "aad")); });
 test("tampered ciphertext fails authentication", async () => { const key = await importRoomKey(generateRoomKey()); const envelope = await encryptJson(key, { content: "secret" }, "aad"); envelope.ciphertext = `${envelope.ciphertext.slice(0, -1)}${envelope.ciphertext.endsWith("A") ? "B" : "A"}`; await assert.rejects(() => decryptJson(key, envelope, "aad")); });

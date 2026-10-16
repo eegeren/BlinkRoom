@@ -1,5 +1,6 @@
-import { GCM_IV_BYTES, ROOM_KEY_BYTES } from "./constants";
+import { GCM_IV_BYTES } from "./constants";
 import { asArrayBuffer, base64UrlToBytes, bytesToBase64Url, utf8, utf8Decode } from "./encoding";
+import { roomKeyBytes } from "./room-key";
 import { decryptJson, parseEnvelope } from "./payload";
 
 const METADATA_INFO = "blinkroom-metadata-v1";
@@ -31,8 +32,7 @@ export function isMetadataProtectedEnvelope(serializedEnvelope: string): boolean
 }
 
 export async function deriveMetadataKey(roomSecret: string): Promise<CryptoKey> {
-  const raw = base64UrlToBytes(roomSecret);
-  if (raw.byteLength !== ROOM_KEY_BYTES) throw new Error("Invalid room secret");
+  const raw = await roomKeyBytes(roomSecret);
   const source = await crypto.subtle.importKey("raw", asArrayBuffer(raw), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: utf8.encode(METADATA_SALT), info: utf8.encode(METADATA_INFO) },
