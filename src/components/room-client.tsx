@@ -73,6 +73,7 @@ import { selectTransport } from "@/src/lib/transport/selection";
 import { fetchEncryptedFile, fetchEncryptedFileStream } from "@/src/lib/storage/download";
 import { takeSharedInbox } from "@/src/lib/share-inbox";
 import { peekPendingRoomUpload, takePendingRoomUpload } from "@/src/lib/pending-room-upload";
+import { UploadRequestError, retryUploadRequest, uploadApiRequest, uploadPartBytes } from "@/src/lib/upload-request";
 import { uploadValidationError } from "@/src/lib/upload-validation";
 import { filesFromDropSnapshot, snapshotDrop } from "@/src/lib/drop-files";
 import { createQueuedUploads } from "@/src/lib/upload-queue";
@@ -550,100 +551,18 @@ async function uploadStreamingStorage(input: {
       continue;
     }
 
-    const signed = await fetch(
-      `/api/rooms/${input.slug}/uploads/${session.sessionId}/parts`,
-      {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({
-          partNumber,
-        }),
-        signal: input.signal,
-      },
-    );
-
-    if (!signed.ok) {
-      throw new Error(
-        "Temporary storage is unavailable right now.",
+    // Retry the exact encrypted bytes; fresh encryption would corrupt resumed parts.
+    const etag = await retryUploadRequest(async () => {
+      const signed = await uploadApiRequest(
+        `/api/rooms/${input.slug}/uploads/${session.sessionId}/parts`,
+        { method: "POST", headers: authHeaders, body: JSON.stringify({ partNumber }), signal: input.signal },
+        "preparing a part", false,
       );
-    }
-
-    const { url } = (await signed.json()) as {
-      url: string;
-    };
-
-    const etag = await new Promise<string>(
-      (resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-
-        const abort = () => xhr.abort();
-
-        input.signal.addEventListener(
-          "abort",
-          abort,
-          {
-            once: true,
-          },
-        );
-
-        xhr.open("PUT", url);
-
-        xhr.setRequestHeader(
-          "Content-Type",
-          "application/octet-stream",
-        );
-
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) {
-            input.onUpload(
-              Math.round(
-                ((uploaded + event.loaded) /
-                  size) *
-                  100,
-              ),
-            );
-          }
-        };
-
-        xhr.onload = () => {
-          input.signal.removeEventListener(
-            "abort",
-            abort,
-          );
-
-          const value =
-            xhr.getResponseHeader("etag");
-
-          if (
-            xhr.status >= 200 &&
-            xhr.status < 300 &&
-            value
-          ) {
-            resolve(value);
-          } else {
-            reject(
-              new Error(
-                "Temporary storage is unavailable right now.",
-              ),
-            );
-          }
-        };
-
-        xhr.onerror = () =>
-          reject(
-            new Error(
-              "Temporary storage is unavailable right now.",
-            ),
-          );
-
-        xhr.onabort = () =>
-          reject(
-            new Error("Transfer cancelled"),
-          );
-
-        xhr.send(body);
-      },
-    );
+      const { url } = await signed.json() as { url: string };
+      return uploadPartBytes(url, body, input.signal, bytes =>
+        input.onUpload(Math.round((uploaded + bytes) / size * 100)),
+      );
+    }, input.signal);
 
     parts.push({
       partNumber,
@@ -652,7 +571,7 @@ async function uploadStreamingStorage(input: {
 
     uploaded += body.size;
 
-    const acknowledged = await fetch(
+    await uploadApiRequest(
       `/api/rooms/${input.slug}/uploads/${session.sessionId}/parts`,
       {
         method: "PATCH",
@@ -664,13 +583,9 @@ async function uploadStreamingStorage(input: {
         }),
         signal: input.signal,
       },
+      "confirming a part",
     );
 
-    if (!acknowledged.ok) {
-      throw new Error(
-        "Temporary storage is unavailable right now.",
-      );
-    }
   }
 
   if (partNumber !== session.partCount) {
@@ -3012,7 +2927,8 @@ export function RoomClient({
           message ===
             "Transfer cancelled";
 
-        const friendly = [
+        const friendly = cause instanceof UploadRequestError ? message
+          : cause instanceof TypeError ? "Connection interrupted during upload. Please retry." : [
           "Empty files can’t be uploaded.",
           "This file is too large.",
           "This room has reached its temporary storage limit.",
