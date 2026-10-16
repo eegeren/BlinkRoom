@@ -102,13 +102,13 @@ export async function PATCH(
     create: { sessionId, ...input.data },
     update: { etag: input.data.etag, size: input.data.size },
   });
-  const aggregate = await db.uploadPart.aggregate({
+  // Prisma Int aggregates can overflow above 2 GiB although each part fits.
+  const completedParts = await db.uploadPart.findMany({
     where: { sessionId },
-    _sum: { size: true },
-    _count: true,
+    select: { size: true },
   });
   return NextResponse.json({
-    completedParts: aggregate._count,
-    uploadedBytes: aggregate._sum.size ?? 0,
+    completedParts: completedParts.length,
+    uploadedBytes: completedParts.reduce((total, part) => total + part.size, 0),
   });
 }
